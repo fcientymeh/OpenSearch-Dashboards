@@ -20,6 +20,8 @@ import {
   ISearchOptions,
   SearchInterceptor,
   SearchInterceptorDeps,
+  getAsyncSessionId,
+  setAsyncSessionId,
 } from '../../../data/public';
 import {
   API,
@@ -66,6 +68,8 @@ export class SQLSearchInterceptor extends SearchInterceptor {
         ...dataFrame.meta.queryConfig,
         ...(this.queryService.dataSet.getDataSet() && {
           dataSourceId: this.queryService.dataSet.getDataSet()?.dataSourceRef?.id,
+          dataSourceName: this.queryService.dataSet.getDataSet()?.dataSourceRef?.name,
+          timeFieldName: this.queryService.dataSet.getDataSet()?.timeFieldName,
         }),
       },
     };
@@ -105,12 +109,20 @@ export class SQLSearchInterceptor extends SearchInterceptor {
     }
 
     const queryString = getRawQueryString(searchRequest) ?? '';
+    const dataSourceRef = this.queryService.dataSet.getDataSet()
+      ? {
+          dataSourceId: this.queryService.dataSet.getDataSet()?.dataSourceRef?.id,
+          dataSourceName: this.queryService.dataSet.getDataSet()?.dataSourceRef?.name,
+        }
+      : {};
 
     dataFrame.meta = {
       ...dataFrame.meta,
       queryConfig: {
         ...dataFrame.meta.queryConfig,
+        ...dataSourceRef,
       },
+      sessionId: dataSourceRef ? getAsyncSessionId(dataSourceRef.dataSourceName!) : {},
     };
 
     const onPollingSuccess = (pollingResult: any) => {
@@ -130,7 +142,7 @@ export class SQLSearchInterceptor extends SearchInterceptor {
 
       this.deps.toasts.addInfo({
         title: i18n.translate('queryEnhancements.sqlQueryPolling', {
-          defaultMessage: 'Polling query job results...',
+          defaultMessage: `Polling query job results. Status: ${pollingResult.body.meta.status}`,
         }),
       });
 
@@ -149,6 +161,9 @@ export class SQLSearchInterceptor extends SearchInterceptor {
     return fetchDataFrame(dfContext, queryString, dataFrame).pipe(
       concatMap((jobResponse) => {
         const df = jobResponse.body;
+        if (dataSourceRef?.dataSourceName && df?.meta?.sessionId) {
+          setAsyncSessionId(dataSourceRef.dataSourceName, df?.meta?.sessionId);
+        }
         const dataFramePolling = new DataFramePolling<any, any>(
           () => fetchDataFramePolling(dfContext, df),
           5000,

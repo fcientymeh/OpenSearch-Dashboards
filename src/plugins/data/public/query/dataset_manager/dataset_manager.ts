@@ -4,25 +4,29 @@
  */
 
 import { BehaviorSubject } from 'rxjs';
-import { skip } from 'rxjs/operators';
 import { CoreStart } from 'opensearch-dashboards/public';
+import { skip } from 'rxjs/operators';
 import {
-  IndexPatternsService,
   SIMPLE_DATA_SET_TYPES,
   SimpleDataSet,
   SimpleDataSource,
+  UI_SETTINGS,
 } from '../../../common';
+import { IndexPatternsContract } from '../../index_patterns';
 
 export class DataSetManager {
   private dataSet$: BehaviorSubject<SimpleDataSet | undefined>;
-  private indexPatterns?: IndexPatternsService;
+  private indexPatterns?: IndexPatternsContract;
+  private defaultDataSet?: SimpleDataSet;
 
   constructor(private readonly uiSettings: CoreStart['uiSettings']) {
     this.dataSet$ = new BehaviorSubject<SimpleDataSet | undefined>(undefined);
   }
 
-  public init = (indexPatterns: IndexPatternsService) => {
+  public init = async (indexPatterns: IndexPatternsContract) => {
     this.indexPatterns = indexPatterns;
+    this.defaultDataSet = await this.fetchDefaultDataSet();
+    return this.defaultDataSet;
   };
 
   public getUpdates$ = () => {
@@ -38,11 +42,16 @@ export class DataSetManager {
    * @param {Query} query
    */
   public setDataSet = (dataSet: SimpleDataSet | undefined) => {
+    if (!this.uiSettings.get(UI_SETTINGS.QUERY_ENHANCEMENTS_ENABLED)) return;
     this.dataSet$.next(dataSet);
   };
 
-  public getDefaultDataSet = async (): Promise<SimpleDataSet | undefined> => {
-    const defaultIndexPatternId = await this.uiSettings.get('defaultIndex');
+  public getDefaultDataSet = () => {
+    return this.defaultDataSet;
+  };
+
+  public fetchDefaultDataSet = async (): Promise<SimpleDataSet | undefined> => {
+    const defaultIndexPatternId = this.uiSettings.get('defaultIndex');
     if (!defaultIndexPatternId) {
       return undefined;
     }

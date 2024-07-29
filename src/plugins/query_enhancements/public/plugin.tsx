@@ -94,7 +94,7 @@ export class QueryEnhancementsPlugin
             showFilterBar: false,
             showDataSetsSelector: true,
             showDataSourcesSelector: true,
-            queryStringInput: { initialValue: 'SELECT * FROM <data_source>' },
+            queryStringInput: { initialValue: 'SELECT * FROM <data_source> LIMIT 10' },
           },
           fields: {
             filterable: false,
@@ -109,11 +109,7 @@ export class QueryEnhancementsPlugin
 
     data.__enhance({
       ui: {
-        queryEditorExtension: createQueryAssistExtension(
-          core.http,
-          this.connectionsService,
-          this.config.queryAssist
-        ),
+        queryEditorExtension: createQueryAssistExtension(core.http, data, this.config.queryAssist),
       },
     });
 
