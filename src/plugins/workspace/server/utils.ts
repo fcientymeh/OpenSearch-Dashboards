@@ -4,60 +4,28 @@
  */
 
 import crypto from 'crypto';
-import { Observable } from 'rxjs';
-import { first } from 'rxjs/operators';
 import {
-  AuthStatus,
-  HttpAuth,
   OpenSearchDashboardsRequest,
-  Principals,
-  PrincipalType,
-  SharedGlobalConfig,
   Permissions,
   SavedObjectsClientContract,
   IUiSettingsClient,
+  Principals,
+  WorkspacePermissionMode,
 } from '../../../core/server';
-import { AuthInfo } from './types';
 import { updateWorkspaceState } from '../../../core/server/utils';
 import { DEFAULT_DATA_SOURCE_UI_SETTINGS_ID } from '../../data_source_management/common';
-import { CURRENT_USER_PLACEHOLDER } from '../common/constants';
+import {
+  CURRENT_USER_PLACEHOLDER,
+  WORKSPACE_DATA_SOURCE_AND_CONNECTION_OBJECT_TYPES,
+  OSD_ADMIN_WILDCARD_MATCH_ALL,
+} from '../common/constants';
+import { PermissionModeId } from '../../../core/server';
 
 /**
  * Generate URL friendly random ID
  */
 export const generateRandomId = (size: number) => {
   return crypto.randomBytes(size).toString('base64url').slice(0, size);
-};
-
-export const getPrincipalsFromRequest = (
-  request: OpenSearchDashboardsRequest,
-  auth?: HttpAuth
-): Principals => {
-  const payload: Principals = {};
-  const authInfoResp = auth?.get(request);
-  if (authInfoResp?.status === AuthStatus.unknown) {
-    /**
-     * Login user have access to all the workspaces when no authentication is presented.
-     */
-    return payload;
-  }
-
-  if (authInfoResp?.status === AuthStatus.authenticated) {
-    const authInfo = authInfoResp?.state as { authInfo: AuthInfo } | null;
-    if (authInfo?.authInfo?.backend_roles) {
-      payload[PrincipalType.Groups] = authInfo.authInfo.backend_roles;
-    }
-    if (authInfo?.authInfo?.user_name) {
-      payload[PrincipalType.Users] = [authInfo.authInfo.user_name];
-    }
-    return payload;
-  }
-
-  if (authInfoResp?.status === AuthStatus.unauthenticated) {
-    throw new Error('NOT_AUTHORIZED');
-  }
-
-  throw new Error('UNEXPECTED_AUTHORIZATION_STATUS');
 };
 
 export const updateDashboardAdminStateForRequest = (
@@ -69,30 +37,17 @@ export const updateDashboardAdminStateForRequest = (
 ) => {
   // If the security plugin is not installed, login defaults to OSD Admin
   if (!groups.length && !users.length) {
-    updateWorkspaceState(request, { isDashboardAdmin: true });
-    return;
+    return updateWorkspaceState(request, { isDashboardAdmin: true });
   }
-  // If groups/users are not configured or [], login defaults to OSD Admin
-  if (!configGroups.length && !configUsers.length) {
-    updateWorkspaceState(request, { isDashboardAdmin: true });
-    return;
+  // If user config contains wildcard characters '*', login defaults to OSD Admin
+  if (configUsers.includes(OSD_ADMIN_WILDCARD_MATCH_ALL)) {
+    return updateWorkspaceState(request, { isDashboardAdmin: true });
   }
   const groupMatchAny = groups.some((group) => configGroups.includes(group));
   const userMatchAny = users.some((user) => configUsers.includes(user));
-  updateWorkspaceState(request, {
+  return updateWorkspaceState(request, {
     isDashboardAdmin: groupMatchAny || userMatchAny,
   });
-};
-
-export const getOSDAdminConfigFromYMLConfig = async (
-  globalConfig$: Observable<SharedGlobalConfig>
-) => {
-  const globalConfig = await globalConfig$.pipe(first()).toPromise();
-  const groupsResult = (globalConfig.opensearchDashboards?.dashboardAdmin?.groups ||
-    []) as string[];
-  const usersResult = (globalConfig.opensearchDashboards?.dashboardAdmin?.users || []) as string[];
-
-  return [groupsResult, usersResult];
 };
 
 export const transferCurrentUserInPermissions = (
@@ -119,8 +74,8 @@ export const transferCurrentUserInPermissions = (
 export const getDataSourcesList = (client: SavedObjectsClientContract, workspaces: string[]) => {
   return client
     .find({
-      type: 'data-source',
-      fields: ['id', 'title'],
+      type: WORKSPACE_DATA_SOURCE_AND_CONNECTION_OBJECT_TYPES,
+      fields: ['id', 'title', 'type'],
       perPage: 10000,
       workspaces,
     })
@@ -129,8 +84,10 @@ export const getDataSourcesList = (client: SavedObjectsClientContract, workspace
       if (objects) {
         return objects.map((source) => {
           const id = source.id;
+          const type = source.type;
           return {
             id,
+            type,
           };
         });
       } else {
@@ -159,4 +116,52 @@ export const checkAndSetDefaultDataSource = async (
     // If there is no data source left, clear workspace level default data source.
     await uiSettingsClient.set(DEFAULT_DATA_SOURCE_UI_SETTINGS_ID, undefined);
   }
+};
+
+/**
+ * translate workspace permission object into PermissionModeId
+ * @param permissions workspace permissions object
+ * @param isPermissionControlEnabled permission control flag
+ * @param principals
+ * @returns PermissionModeId
+ */
+export const translatePermissionsToRole = (
+  isPermissionControlEnabled: boolean,
+  permissions?: Permissions,
+  principals?: Principals
+): PermissionModeId => {
+  let permissionMode = PermissionModeId.Owner;
+  if (isPermissionControlEnabled && permissions) {
+    const modes = [] as WorkspacePermissionMode[];
+    const currentUserId = principals?.users?.[0] || '';
+    const currentGroupId = principals?.groups?.[0] || '';
+    [
+      WorkspacePermissionMode.Write,
+      WorkspacePermissionMode.LibraryWrite,
+      WorkspacePermissionMode.LibraryRead,
+      WorkspacePermissionMode.Read,
+    ].forEach((mode) => {
+      if (
+        permissions[mode] &&
+        (permissions[mode].users?.includes(currentUserId) ||
+          permissions[mode].groups?.includes(currentGroupId))
+      ) {
+        modes.push(mode);
+      }
+    });
+
+    if (
+      modes.includes(WorkspacePermissionMode.LibraryWrite) &&
+      modes.includes(WorkspacePermissionMode.Write)
+    ) {
+      permissionMode = PermissionModeId.Owner;
+    } else if (modes.includes(WorkspacePermissionMode.LibraryWrite)) {
+      permissionMode = PermissionModeId.ReadAndWrite;
+    } else {
+      permissionMode = PermissionModeId.Read;
+    }
+  } else {
+    permissionMode = PermissionModeId.Read;
+  }
+  return permissionMode;
 };

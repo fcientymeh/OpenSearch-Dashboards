@@ -9,27 +9,67 @@ exports[`Recent items should render base element normally 1`] = `
       <div
         class="euiPopover__anchor"
       >
-        <button
-          class="euiButtonEmpty euiButtonEmpty--text euiHeaderSectionItemButton"
-          data-test-subj="recentItemsSectionButton"
-          type="button"
+        <span
+          class="euiToolTipAnchor"
         >
-          <span
-            class="euiButtonContent euiButtonEmpty__content"
+          <button
+            aria-expanded="false"
+            aria-haspopup="true"
+            aria-label="View recents"
+            class="euiButtonIcon euiButtonIcon--text euiButtonIcon--empty euiButtonIcon--xSmall headerRecentItemsButton"
+            data-test-subj="recentItemsSectionButton"
+            type="button"
           >
             <span
-              class="euiButtonEmpty__text"
+              aria-hidden="true"
+              class="euiButtonIcon__icon"
+              color="inherit"
+              data-euiicon-type="recent"
+            />
+          </button>
+        </span>
+      </div>
+    </div>
+  </div>
+</body>
+`;
+
+exports[`Recent items should show loading indicator if loading count > 0 1`] = `
+<body>
+  <div>
+    <div
+      class="euiPopover euiPopover--anchorDownCenter"
+    >
+      <div
+        class="euiPopover__anchor"
+      >
+        <span
+          class="euiToolTipAnchor"
+        >
+          <button
+            aria-expanded="false"
+            aria-haspopup="true"
+            aria-label="View recents"
+            class="euiButtonEmpty euiButtonEmpty--primary euiButtonEmpty--xSmall headerRecentItemsButton headerRecentItemsButton--loadingIndicator"
+            data-test-subj="recentItemsSectionButton"
+            type="button"
+          >
+            <span
+              class="euiButtonContent euiButtonEmpty__content"
             >
               <span
-                class="euiHeaderSectionItemButton__content"
+                class="euiButtonEmpty__text"
               >
                 <span
-                  data-euiicon-type="recentlyViewedApp"
+                  aria-hidden="false"
+                  aria-label="Loading content"
+                  class="euiLoadingSpinner euiLoadingSpinner--medium"
+                  data-test-subj="globalLoadingIndicator"
                 />
               </span>
             </span>
-          </span>
-        </button>
+          </button>
+        </span>
       </div>
     </div>
   </div>

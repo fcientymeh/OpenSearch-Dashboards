@@ -3,10 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { ApplicationStart, SavedObjectsStart } from '../../../../../core/public';
-import type { WorkspacePermissionMode } from '../../../common/constants';
-import type { DetailTab, WorkspaceOperationType, WorkspacePermissionItemType } from './constants';
-import { DataSource } from '../../../common/types';
+import type {
+  AppMountParameters,
+  ApplicationStart,
+  SavedObjectsStart,
+  WorkspacePermissionMode,
+} from '../../../../../core/public';
+import type { WorkspaceOperationType, WorkspacePermissionItemType } from './constants';
+import { DataSourceConnection } from '../../../common/types';
 import { DataSourceManagementPluginSetup } from '../../../../../plugins/data_source_management/public';
 import { WorkspaceUseCase } from '../../types';
 
@@ -31,30 +35,20 @@ export type WorkspacePermissionSetting =
 export interface WorkspaceFormSubmitData {
   name: string;
   description?: string;
-  features?: string[];
+  features: string[];
   color?: string;
   permissionSettings?: WorkspacePermissionSetting[];
-  selectedDataSources?: DataSource[];
-}
-
-export interface WorkspaceFormData extends WorkspaceFormSubmitData {
-  id: string;
-  reserved?: boolean;
+  selectedDataSourceConnections?: DataSourceConnection[];
+  shouldNavigate?: boolean;
 }
 
 export enum WorkspaceFormErrorCode {
   InvalidWorkspaceName,
   WorkspaceNameMissing,
   UseCaseMissing,
-  InvalidPermissionType,
-  InvalidPermissionModes,
-  PermissionUserIdMissing,
-  PermissionUserGroupMissing,
-  DuplicateUserIdPermissionSetting,
-  DuplicateUserGroupPermissionSetting,
-  PermissionSettingOwnerMissing,
   InvalidDataSource,
   DuplicateDataSource,
+  InvalidColor,
 }
 
 export interface WorkspaceFormError {
@@ -64,25 +58,46 @@ export interface WorkspaceFormError {
 
 export type WorkspaceFormErrors = {
   [key in keyof Omit<
-    WorkspaceFormData,
-    'permissionSettings' | 'description' | 'selectedDataSources'
+    WorkspaceFormSubmitData,
+    'permissionSettings' | 'description' | 'selectedDataSourceConnections'
   >]?: WorkspaceFormError;
 } & {
   permissionSettings?: {
     overall?: WorkspaceFormError;
     fields?: { [key: number]: WorkspaceFormError };
   };
-  selectedDataSources?: { [key: number]: WorkspaceFormError };
+  selectedDataSourceConnections?: { [key: number]: WorkspaceFormError };
 };
 
 export interface WorkspaceFormProps {
   application: ApplicationStart;
   savedObjects: SavedObjectsStart;
-  onSubmit?: (formData: WorkspaceFormSubmitData) => void;
-  defaultValues?: WorkspaceFormData;
+  onSubmit?: (
+    formData: WorkspaceFormSubmitData,
+    refresh?: boolean
+  ) => Promise<{ result: boolean; success: true } | undefined>;
+  defaultValues?: Partial<WorkspaceFormSubmitData>;
   operationType: WorkspaceOperationType;
   permissionEnabled?: boolean;
-  detailTab?: DetailTab;
   dataSourceManagement?: DataSourceManagementPluginSetup;
   availableUseCases: WorkspaceUseCase[];
+  onAppLeave: AppMountParameters['onAppLeave'];
+}
+
+export interface AvailableUseCaseItem
+  extends Pick<
+    WorkspaceUseCase,
+    'id' | 'title' | 'features' | 'description' | 'systematic' | 'icon'
+  > {
+  disabled?: boolean;
+}
+
+export interface WorkspaceFormDataState
+  extends Omit<WorkspaceFormSubmitData, 'name' | 'permissionSettings'> {
+  name: string;
+  useCase: string | undefined;
+  selectedDataSourceConnections: DataSourceConnection[];
+  permissionSettings: Array<
+    Pick<WorkspacePermissionSetting, 'id'> & Partial<WorkspacePermissionSetting>
+  >;
 }

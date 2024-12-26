@@ -26,6 +26,8 @@ target
 /test/*/screenshots/failure
 /test/*/screenshots/session
 /test/*/screenshots/visual_regression_gallery.html
+cypress/videos/*
+cypress/screenshots/*
 /html_docs
 .eslintcache
 /data
@@ -70,4 +72,4 @@ snapshots.js
 .yarn-local-mirror
 
 # Ignore the generated antlr files
-/src/plugins/data/public/antlr/opensearch_sql/grammar/.antlr
+/src/plugins/data/public/antlr/**/grammar/.antlr/

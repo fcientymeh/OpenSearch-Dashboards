@@ -4,15 +4,22 @@
  */
 
 import { renderHook, act } from '@testing-library/react-hooks';
-
 import { applicationServiceMock } from '../../../../../core/public/mocks';
-import { WorkspacePermissionMode } from '../../../common/constants';
-import { WorkspaceOperationType, WorkspacePermissionItemType } from './constants';
-import { WorkspaceFormData, WorkspaceFormErrorCode } from './types';
+import { WorkspaceOperationType } from './constants';
+import { WorkspaceFormSubmitData, WorkspaceFormErrorCode } from './types';
 import { useWorkspaceForm } from './use_workspace_form';
+import { waitFor } from '@testing-library/dom';
 
-const setup = (defaultValues?: WorkspaceFormData, permissionEnabled = false) => {
-  const onSubmitMock = jest.fn();
+const setup = ({
+  defaultValues,
+  permissionEnabled = false,
+  onSubmit,
+}: {
+  defaultValues: WorkspaceFormSubmitData;
+  permissionEnabled?: boolean;
+  onSubmit?: jest.Mock;
+}) => {
+  const onSubmitMock = onSubmit ?? jest.fn();
   const renderResult = renderHook(useWorkspaceForm, {
     initialProps: {
       application: applicationServiceMock.createStartContract(),
@@ -31,8 +38,10 @@ const setup = (defaultValues?: WorkspaceFormData, permissionEnabled = false) => 
 describe('useWorkspaceForm', () => {
   it('should return invalid workspace name error and not call onSubmit when invalid name', async () => {
     const { renderResult, onSubmitMock } = setup({
-      id: 'foo',
-      name: '~',
+      defaultValues: {
+        id: 'foo',
+        name: '~',
+      },
     });
     expect(renderResult.result.current.formErrors).toEqual({});
 
@@ -51,8 +60,9 @@ describe('useWorkspaceForm', () => {
   });
   it('should return "Use case is required. Select a use case." and not call onSubmit', async () => {
     const { renderResult, onSubmitMock } = setup({
-      id: 'foo',
-      name: 'test-workspace-name',
+      defaultValues: {
+        name: 'test-workspace-name',
+      },
     });
     expect(renderResult.result.current.formErrors).toEqual({});
 
@@ -69,51 +79,13 @@ describe('useWorkspaceForm', () => {
     );
     expect(onSubmitMock).not.toHaveBeenCalled();
   });
-  it('should return "Add workspace owner." and not call onSubmit', async () => {
-    const { renderResult, onSubmitMock } = setup(
-      {
-        id: 'foo',
-        name: 'test-workspace-name',
-      },
-      true
-    );
-    expect(renderResult.result.current.formErrors).toEqual({});
-
-    act(() => {
-      renderResult.result.current.setPermissionSettings([
-        {
-          id: 0,
-          modes: [WorkspacePermissionMode.LibraryWrite, WorkspacePermissionMode.Write],
-          type: WorkspacePermissionItemType.User,
-        },
-        {
-          id: 1,
-          modes: [WorkspacePermissionMode.LibraryWrite, WorkspacePermissionMode.Write],
-          type: WorkspacePermissionItemType.Group,
-        },
-      ]);
-    });
-    act(() => {
-      renderResult.result.current.handleFormSubmit({ preventDefault: jest.fn() });
-    });
-
-    expect(renderResult.result.current.formErrors).toEqual(
-      expect.objectContaining({
-        permissionSettings: {
-          overall: {
-            code: WorkspaceFormErrorCode.PermissionSettingOwnerMissing,
-            message: 'Add a workspace owner.',
-          },
-        },
-      })
-    );
-    expect(onSubmitMock).not.toHaveBeenCalled();
-  });
   it('should call onSubmit with workspace name and features', async () => {
     const { renderResult, onSubmitMock } = setup({
-      id: 'foo',
-      name: 'test-workspace-name',
-      features: ['use-case-observability'],
+      defaultValues: {
+        id: 'foo',
+        name: 'test-workspace-name',
+        features: ['use-case-observability'],
+      },
     });
     expect(renderResult.result.current.formErrors).toEqual({});
 
@@ -123,15 +95,17 @@ describe('useWorkspaceForm', () => {
     expect(onSubmitMock).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'test-workspace-name',
-        features: ['use-case-observability', 'workspace_detail'],
+        features: ['use-case-observability'],
       })
     );
   });
   it('should update selected use case', () => {
     const { renderResult } = setup({
-      id: 'foo',
-      name: 'test-workspace-name',
-      features: ['use-case-observability'],
+      defaultValues: {
+        id: 'foo',
+        name: 'test-workspace-name',
+        features: ['use-case-observability'],
+      },
     });
 
     expect(renderResult.result.current.formData.useCase).toBe('observability');
@@ -139,5 +113,44 @@ describe('useWorkspaceForm', () => {
       renderResult.result.current.handleUseCaseChange('search');
     });
     expect(renderResult.result.current.formData.useCase).toBe('search');
+  });
+
+  it('should reset workspace form', () => {
+    const { renderResult } = setup({
+      defaultValues: {
+        id: 'test',
+        name: 'current-workspace-name',
+        features: ['use-case-observability'],
+      },
+    });
+    expect(renderResult.result.current.formData.name).toBe('current-workspace-name');
+
+    act(() => {
+      renderResult.result.current.setName('update-workspace-name');
+    });
+    expect(renderResult.result.current.formData.name).toBe('update-workspace-name');
+
+    act(() => {
+      renderResult.result.current.handleResetForm();
+    });
+    expect(renderResult.result.current.formData.name).toBe('current-workspace-name');
+  });
+
+  it('should call setPermissionSettings if onSubmit successfully', async () => {
+    const onSubmitMock = jest.fn().mockResolvedValue({ success: true });
+    const { renderResult } = setup({
+      defaultValues: {
+        id: 'test',
+        name: 'current-workspace-name',
+        features: ['use-case-observability'],
+      },
+      onSubmit: onSubmitMock,
+    });
+    act(() => {
+      renderResult.result.current.handleSubmitPermissionSettings([]);
+    });
+    await waitFor(() => {
+      expect(renderResult.result.current.formData.permissionSettings).toStrictEqual([]);
+    });
   });
 });

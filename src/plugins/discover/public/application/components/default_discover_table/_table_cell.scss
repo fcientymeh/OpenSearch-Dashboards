@@ -1,4 +1,4 @@
-$osdDocTableCellPadding: calc($ouiSizeM / 2); // corresponds to DataGrid medium cellPadding (6px)
+$osdDocTableCellPadding: calc($euiSizeM / 2); // corresponds to DataGrid medium cellPadding (6px)
 
 .osdDocTable__detailsParent {
   border-top: none !important;
@@ -47,7 +47,7 @@ $osdDocTableCellPadding: calc($ouiSizeM / 2); // corresponds to DataGrid medium 
       top: 0;
       height: 100%;
       width: 100%;
-      background-image: linear-gradient(to right, transparent 0, $ouiColorEmptyShade 16px);
+      background-image: linear-gradient(to right, transparent 0, $euiColorEmptyShade 16px);
       z-index: 1;
     }
 
@@ -88,7 +88,7 @@ $osdDocTableCellPadding: calc($ouiSizeM / 2); // corresponds to DataGrid medium 
 // nested for specificity
 .osd-table {
   .osdDocTableCell {
-    padding: $osdDocTableCellPadding;
+    padding: $euiSizeS;
   }
 }
 
@@ -107,4 +107,9 @@ $osdDocTableCellPadding: calc($ouiSizeM / 2); // corresponds to DataGrid medium 
 
 .osdDocTableCell__dataField {
   white-space: pre-wrap;
+
+  // stylelint-disable-next-line @osd/stylelint/no_modifying_global_selectors
+  .eui-textNoWrap & {
+    white-space: nowrap;
+  }
 }

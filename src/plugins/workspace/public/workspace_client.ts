@@ -10,9 +10,13 @@ import {
   HttpSetup,
   WorkspaceAttribute,
   WorkspacesSetup,
+  IWorkspaceClient,
+  IWorkspaceResponse as IResponse,
+  WorkspaceFindOptions,
+  WorkspacePermissionMode,
 } from '../../../core/public';
-import { WorkspacePermissionMode } from '../common/constants';
 import { SavedObjectPermissions, WorkspaceAttributeWithPermission } from '../../../core/types';
+import { DataSourceAssociation } from './components/data_source_association/data_source_association';
 
 const WORKSPACES_API_BASE_URL = '/api/workspaces';
 
@@ -22,33 +26,13 @@ const join = (...uriComponents: Array<string | undefined>) =>
     .map(encodeURIComponent)
     .join('/');
 
-type IResponse<T> =
-  | {
-      result: T;
-      success: true;
-    }
-  | {
-      success: false;
-      error?: string;
-    };
-
-interface WorkspaceFindOptions {
-  page?: number;
-  perPage?: number;
-  search?: string;
-  searchFields?: string[];
-  sortField?: string;
-  sortOrder?: string;
-  permissionModes?: WorkspacePermissionMode[];
-}
-
 /**
  * Workspaces is OpenSearchDashboards's visualize mechanism allowing admins to
  * organize related features
  *
  * @public
  */
-export class WorkspaceClient {
+export class WorkspaceClient implements IWorkspaceClient {
   private http: HttpSetup;
   private workspaces: WorkspacesSetup;
 
@@ -71,7 +55,7 @@ export class WorkspaceClient {
    * Add a non-throw-error fetch method,
    * so that consumers only need to care about
    * if the success is false instead of wrapping the call with a try catch
-   * and judge the error both in catch clause and if(!success) cluase.
+   * and judge the error both in catch clause and if(!success) clause.
    */
   private safeFetch = async <T = any>(
     path: string,
@@ -120,17 +104,27 @@ export class WorkspaceClient {
     });
 
     if (result?.success) {
-      const resultWithWritePermission = await this.list({
-        perPage: 999,
-        permissionModes: [WorkspacePermissionMode.LibraryWrite],
-      });
-      if (resultWithWritePermission?.success) {
+      const [resultWithWritePermission, resultWithOwnerPermission] = await Promise.all([
+        this.list({
+          perPage: 999,
+          permissionModes: [WorkspacePermissionMode.LibraryWrite],
+        }),
+        this.list({
+          perPage: 999,
+          permissionModes: [WorkspacePermissionMode.Write],
+        }),
+      ]);
+      if (resultWithWritePermission?.success && resultWithOwnerPermission?.success) {
         const workspaceIdsWithWritePermission = resultWithWritePermission.result.workspaces.map(
+          (workspace: WorkspaceAttribute) => workspace.id
+        );
+        const workspaceIdsWithOwnerPermission = resultWithOwnerPermission.result.workspaces.map(
           (workspace: WorkspaceAttribute) => workspace.id
         );
         const workspaces = result.result.workspaces.map((workspace: WorkspaceAttribute) => ({
           ...workspace,
           readonly: !workspaceIdsWithWritePermission.includes(workspace.id),
+          owner: workspaceIdsWithOwnerPermission.includes(workspace.id),
         }));
         this.workspaces.workspaceList$.next(workspaces);
       }
@@ -203,6 +197,7 @@ export class WorkspaceClient {
     settings: {
       dataSources?: string[];
       permissions?: SavedObjectPermissions;
+      dataConnections?: string[];
     }
   ): Promise<IResponse<Pick<WorkspaceAttributeWithPermission, 'id'>>> {
     const path = this.getPath();
@@ -232,6 +227,9 @@ export class WorkspaceClient {
     const result = await this.safeFetch<null>(this.getPath(id), { method: 'DELETE' });
 
     if (result.success) {
+      // After deleting workspace, need to reset current workspace ID.
+      this.workspaces.currentWorkspaceId$.next('');
+
       await this.updateWorkspaceList();
     }
 
@@ -294,6 +292,7 @@ export class WorkspaceClient {
     settings: {
       dataSources?: string[];
       permissions?: SavedObjectPermissions;
+      dataConnections?: string[];
     }
   ): Promise<IResponse<boolean>> {
     const path = this.getPath(id);
@@ -312,6 +311,68 @@ export class WorkspaceClient {
     }
 
     return result;
+  }
+
+  /**
+   * copy saved objects to target workspace
+   *
+   * @param {Array<{ id: string; type: string }>} objects
+   * @param {string} targetWorkspace
+   * @param {boolean} includeReferencesDeep
+   * @returns {Promise<IResponse<any>>} result for this operation
+   */
+  public async copy(
+    objects: Array<{ id: string; type: string }>,
+    targetWorkspace: string,
+    includeReferencesDeep: boolean = true
+  ): Promise<IResponse<any>> {
+    const path = this.getPath('_duplicate_saved_objects');
+    const body = {
+      objects,
+      targetWorkspace,
+      includeReferencesDeep,
+    };
+
+    const result = await this.safeFetch(path, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+
+    return result;
+  }
+
+  public async associate(savedObjects: Array<{ id: string; type: string }>, workspaceId: string) {
+    const path = this.getPath('_associate');
+    const body = {
+      savedObjects,
+      workspaceId,
+    };
+    const result = await this.safeFetch<Array<{ id: string; type: string }>>(path, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+
+    return result;
+  }
+
+  public async dissociate(savedObjects: Array<{ id: string; type: string }>, workspaceId: string) {
+    const path = this.getPath('_dissociate');
+    const body = {
+      savedObjects,
+      workspaceId,
+    };
+    const result = await this.safeFetch<Array<{ id: string; type: string }>>(path, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+
+    return result;
+  }
+
+  ui() {
+    return {
+      DataSourceAssociation,
+    };
   }
 
   public stop() {

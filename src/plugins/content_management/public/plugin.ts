@@ -11,6 +11,7 @@ import {
   ContentManagementPluginSetupDependencies,
   ContentManagementPluginStart,
   ContentManagementPluginStartDependencies,
+  RenderOptions,
 } from './types';
 import { CUSTOM_CONTENT_EMBEDDABLE } from './components/custom_content_embeddable';
 import { CustomContentEmbeddableFactoryDefinition } from './components/custom_content_embeddable_factory';
@@ -64,13 +65,16 @@ export class ContentManagementPublicPlugin
     this.contentManagementService.start();
     return {
       registerContentProvider: this.contentManagementService.registerContentProvider,
-      renderPage: (id: string) => {
+      updatePageSection: this.contentManagementService.updatePageSection,
+      getPage: (id: string) => this.contentManagementService.getPage(id),
+      renderPage: (id: string, renderOptions?: RenderOptions) => {
         const page = this.contentManagementService.getPage(id);
         if (page) {
           return renderPage({
             page,
             embeddable: depsStart.embeddable,
             savedObjectsClient: core.savedObjects.client,
+            renderOptions,
           });
         }
       },

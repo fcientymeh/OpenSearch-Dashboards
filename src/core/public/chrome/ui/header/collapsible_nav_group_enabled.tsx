@@ -4,25 +4,17 @@
  */
 
 import './collapsible_nav_group_enabled.scss';
-import {
-  EuiFlexItem,
-  EuiFlyout,
-  EuiSideNavItemType,
-  EuiSideNav,
-  EuiPanel,
-  EuiText,
-  EuiHorizontalRule,
-} from '@elastic/eui';
+import { EuiFlyout, EuiPanel, EuiHideFor, EuiFlyoutProps, EuiShowFor } from '@elastic/eui';
 import { i18n } from '@osd/i18n';
 import React, { useMemo } from 'react';
 import useObservable from 'react-use/lib/useObservable';
 import * as Rx from 'rxjs';
 import classNames from 'classnames';
+import { WorkspacesStart } from 'src/core/public/workspace';
+import { NavGroupType } from '../../../../types';
 import { ChromeNavControl, ChromeNavLink } from '../..';
-import { AppCategory, NavGroupStatus } from '../../../../types';
 import { InternalApplicationStart } from '../../../application/types';
 import { HttpStart } from '../../../http';
-import { OnIsLockedUpdate } from './';
 import { createEuiListItem } from './nav_link';
 import type { Logos } from '../../../../common/types';
 import {
@@ -30,25 +22,22 @@ import {
   ChromeRegistrationNavLink,
   NavGroupItemInMap,
 } from '../../nav_group';
-import {
-  fulfillRegistrationLinksToChromeNavLinks,
-  getOrderedLinksOrCategories,
-  LinkItem,
-  LinkItemType,
-} from '../../utils';
+import { fulfillRegistrationLinksToChromeNavLinks, getVisibleUseCases, sortBy } from '../../utils';
 import { ALL_USE_CASE_ID, DEFAULT_APP_CATEGORIES } from '../../../../../core/utils';
+import { GlobalSearchCommand } from '../../global_search';
 import { CollapsibleNavTop } from './collapsible_nav_group_enabled_top';
 import { HeaderNavControls } from './header_nav_controls';
+import { NavGroups } from './collapsible_nav_groups';
+import { HeaderSearchBar, HeaderSearchBarIcon } from './header_search_bar';
 
 export interface CollapsibleNavGroupEnabledProps {
   appId$: InternalApplicationStart['currentAppId$'];
+  collapsibleNavHeaderRender?: () => JSX.Element | null;
   basePath: HttpStart['basePath'];
   id: string;
-  isLocked: boolean;
   isNavOpen: boolean;
   navLinks$: Rx.Observable<ChromeNavLink[]>;
   storage?: Storage;
-  onIsLockedUpdate: OnIsLockedUpdate;
   closeNav: () => void;
   navigateToApp: InternalApplicationStart['navigateToApp'];
   navigateToUrl: InternalApplicationStart['navigateToUrl'];
@@ -59,221 +48,104 @@ export interface CollapsibleNavGroupEnabledProps {
   currentNavGroup$: Rx.Observable<NavGroupItemInMap | undefined>;
   setCurrentNavGroup: ChromeNavGroupServiceStartContract['setCurrentNavGroup'];
   capabilities: InternalApplicationStart['capabilities'];
-}
-
-interface NavGroupsProps {
-  navLinks: ChromeNavLink[];
-  suffix?: React.ReactElement;
-  style?: React.CSSProperties;
-  appId?: string;
-  navigateToApp: InternalApplicationStart['navigateToApp'];
-  onNavItemClick: (
-    event: React.MouseEvent<HTMLButtonElement, MouseEvent>,
-    navItem: ChromeNavLink
-  ) => void;
+  currentWorkspace$: WorkspacesStart['currentWorkspace$'];
+  globalSearchCommands?: GlobalSearchCommand[];
 }
 
 const titleForSeeAll = i18n.translate('core.ui.primaryNav.seeAllLabel', {
   defaultMessage: 'See all...',
 });
 
-export function NavGroups({
-  navLinks,
-  suffix,
-  style,
-  appId,
-  navigateToApp,
-  onNavItemClick,
-}: NavGroupsProps) {
-  const createNavItem = ({
-    link,
-    className,
-  }: {
-    link: ChromeNavLink;
-    className?: string;
-  }): EuiSideNavItemType<{}> => {
-    const euiListItem = createEuiListItem({
-      link,
-      appId,
-      dataTestSubj: `collapsibleNavAppLink-${link.id}`,
-      navigateToApp,
-      onClick: (event) => {
-        onNavItemClick(event, link);
-      },
-    });
-
-    return {
-      id: `${link.id}-${link.title}`,
-      name: <EuiText size="s">{link.title}</EuiText>,
-      onClick: euiListItem.onClick,
-      href: euiListItem.href,
-      emphasize: euiListItem.isActive,
-      className: `nav-link-item ${className || ''}`,
-      buttonClassName: 'nav-link-item-btn',
-      'data-test-subj': euiListItem['data-test-subj'],
-      'aria-label': link.title,
-    };
-  };
-  const createSideNavItem = (navLink: LinkItem, className?: string): EuiSideNavItemType<{}> => {
-    if (navLink.itemType === LinkItemType.LINK) {
-      if (navLink.link.title === titleForSeeAll) {
-        const navItem = createNavItem({
-          link: navLink.link,
-        });
-
-        return {
-          ...navItem,
-          name: <EuiText color="success">{navItem.name}</EuiText>,
-          emphasize: false,
-        };
-      }
-
-      return createNavItem({
-        link: navLink.link,
-        className,
-      });
-    }
-
-    if (navLink.itemType === LinkItemType.PARENT_LINK && navLink.link) {
-      return {
-        ...createNavItem({ link: navLink.link }),
-        forceOpen: true,
-        items: navLink.links.map((subNavLink) => createSideNavItem(subNavLink, 'nav-nested-item')),
-      };
-    }
-
-    if (navLink.itemType === LinkItemType.CATEGORY) {
-      return {
-        id: navLink.category?.id ?? '',
-        name: <div className="nav-link-item">{navLink.category?.label ?? ''}</div>,
-        items: navLink.links?.map((link) => createSideNavItem(link)),
-        'aria-label': navLink.category?.label,
-      };
-    }
-
-    return {} as EuiSideNavItemType<{}>;
-  };
-  const orderedLinksOrCategories = getOrderedLinksOrCategories(navLinks);
-  const sideNavItems = orderedLinksOrCategories
-    .map((navLink) => createSideNavItem(navLink))
-    .filter((item): item is EuiSideNavItemType<{}> => !!item);
-  return (
-    <EuiFlexItem style={style}>
-      <EuiSideNav items={sideNavItems} />
-      {suffix}
-    </EuiFlexItem>
-  );
-}
-
-// Custom category is used for those features not belong to any of use cases in all use case.
-// and the custom category should always sit before manage category
-const customCategory: AppCategory = {
-  id: 'custom',
-  label: i18n.translate('core.ui.customNavList.label', { defaultMessage: 'Custom' }),
-  order: (DEFAULT_APP_CATEGORIES.manage.order || 0) - 500,
-};
-
 enum NavWidth {
   Expanded = 270,
-  Collapsed = 48, // The Collasped width is supposed to be aligned with the hamburger icon on the top left navigation.
+  Collapsed = 48, // The Collapsed width is supposed to be aligned with the hamburger icon on the top left navigation.
 }
 
 export function CollapsibleNavGroupEnabled({
   basePath,
   id,
-  isLocked,
   isNavOpen,
   storage = window.localStorage,
-  onIsLockedUpdate,
   closeNav,
   navigateToApp,
   navigateToUrl,
   logos,
   setCurrentNavGroup,
   capabilities,
+  collapsibleNavHeaderRender,
+  globalSearchCommands,
   ...observables
 }: CollapsibleNavGroupEnabledProps) {
-  const navLinks = useObservable(observables.navLinks$, []).filter((link) => !link.hidden);
+  const allNavLinks = useObservable(observables.navLinks$, []);
+  const navLinks = allNavLinks.filter((link) => !link.hidden);
+  const homeLink = useMemo(() => allNavLinks.find((item) => item.id === 'home'), [allNavLinks]);
   const appId = useObservable(observables.appId$, '');
   const navGroupsMap = useObservable(observables.navGroupsMap$, {});
   const currentNavGroup = useObservable(observables.currentNavGroup$, undefined);
+  const currentWorkspace = useObservable(observables.currentWorkspace$);
 
-  const visibleUseCases = useMemo(
-    () =>
-      Object.values(navGroupsMap).filter(
-        (group) => group.type === undefined && group.status !== NavGroupStatus.Hidden
-      ),
-    [navGroupsMap]
-  );
+  const visibleUseCases = useMemo(() => getVisibleUseCases(navGroupsMap), [navGroupsMap]);
+
+  const currentNavGroupId = useMemo(() => {
+    if (!currentNavGroup) {
+      if (visibleUseCases.length === 1) {
+        return visibleUseCases[0].id;
+      }
+
+      if (!capabilities.workspaces.enabled) {
+        return ALL_USE_CASE_ID;
+      }
+    }
+
+    return currentNavGroup?.id;
+  }, [capabilities, currentNavGroup, visibleUseCases]);
+
+  const shouldAppendManageCategory = capabilities.workspaces.enabled
+    ? !currentNavGroupId
+    : currentNavGroupId === ALL_USE_CASE_ID;
 
   const navLinksForRender: ChromeNavLink[] = useMemo(() => {
-    if (currentNavGroup && currentNavGroup.id !== ALL_USE_CASE_ID) {
-      return fulfillRegistrationLinksToChromeNavLinks(
-        navGroupsMap[currentNavGroup.id].navLinks || [],
-        navLinks
-      );
-    }
-
-    if (visibleUseCases.length === 1) {
-      return fulfillRegistrationLinksToChromeNavLinks(
-        navGroupsMap[visibleUseCases[0].id].navLinks || [],
-        navLinks
-      );
-    }
-
-    const navLinksForAll: ChromeRegistrationNavLink[] = [];
-
-    // Append all the links that do not have use case info to keep backward compatible
-    const linkIdsWithUseGroupInfo = Object.values(navGroupsMap).reduce((total, navGroup) => {
-      return [...total, ...navGroup.navLinks.map((navLink) => navLink.id)];
-    }, [] as string[]);
-    navLinks
-      .filter((link) => !linkIdsWithUseGroupInfo.includes(link.id))
-      .forEach((navLink) => {
-        navLinksForAll.push({
-          ...navLink,
-          category: customCategory,
+    const getSystemNavGroups = () => {
+      const result: ChromeNavLink[] = [];
+      Object.values(navGroupsMap)
+        .sort(sortBy('order'))
+        .forEach((navGroup) => {
+          if (navGroup.type !== NavGroupType.SYSTEM) {
+            return;
+          }
+          const visibleNavLinksWithinNavGroup = fulfillRegistrationLinksToChromeNavLinks(
+            navGroup.navLinks,
+            navLinks
+          );
+          /**
+           * We will take the first visible app inside the system nav groups
+           * when customers click the menu. If there is not a visible nav links,
+           * we should not show the nav group.
+           */
+          if (visibleNavLinksWithinNavGroup[0]) {
+            result.push({
+              ...visibleNavLinksWithinNavGroup[0],
+              title: navGroup.title,
+              category: DEFAULT_APP_CATEGORIES.manage,
+            });
+          }
         });
-      });
 
-    // Append all the links registered to all use case
-    navGroupsMap[ALL_USE_CASE_ID]?.navLinks.forEach((navLink) => {
-      navLinksForAll.push(navLink);
-    });
+      return result;
+    };
 
-    // Append use case section into left navigation
-    Object.values(navGroupsMap)
-      .filter((group) => !group.type)
-      .forEach((group) => {
-        const categoryInfo = {
-          id: group.id,
-          label: group.title,
-          order: group.order,
-        };
-        const linksForAllUseCaseWithinNavGroup = fulfillRegistrationLinksToChromeNavLinks(
-          group.navLinks,
-          navLinks
-        )
-          .filter((navLink) => navLink.showInAllNavGroup)
-          .map((navLink) => ({
-            ...navLink,
-            category: categoryInfo,
-          }));
+    const navLinksResult: ChromeRegistrationNavLink[] = [];
 
-        navLinksForAll.push(...linksForAllUseCaseWithinNavGroup);
+    if (currentNavGroupId) {
+      navLinksResult.push(...(navGroupsMap[currentNavGroupId]?.navLinks || []));
+    }
 
-        if (linksForAllUseCaseWithinNavGroup.length) {
-          navLinksForAll.push({
-            id: group.navLinks[0].id,
-            title: titleForSeeAll,
-            order: Number.MAX_SAFE_INTEGER,
-            category: categoryInfo,
-          });
-        }
-      });
+    if (shouldAppendManageCategory) {
+      navLinksResult.push(...getSystemNavGroups());
+    }
 
-    return fulfillRegistrationLinksToChromeNavLinks(navLinksForAll, navLinks);
-  }, [navLinks, navGroupsMap, currentNavGroup, visibleUseCases]);
+    return fulfillRegistrationLinksToChromeNavLinks(navLinksResult, navLinks);
+  }, [navLinks, navGroupsMap, currentNavGroupId, shouldAppendManageCategory]);
 
   const width = useMemo(() => {
     if (!isNavOpen) {
@@ -306,7 +178,7 @@ export function CollapsibleNavGroupEnabled({
     }
   };
 
-  return (
+  const rendeLeftNav = (props?: Partial<EuiFlyoutProps>) => (
     <EuiFlyout
       data-test-subj="collapsibleNav"
       id={id}
@@ -322,48 +194,83 @@ export function CollapsibleNavGroupEnabled({
       closeButtonPosition="outside"
       hideCloseButton
       paddingSize="none"
+      ownFocus={false}
+      {...props}
     >
       <div className="eui-fullHeight left-navigation-wrapper">
-        <div className="eui-yScroll scrollable-container">
+        {!isNavOpen ? null : (
           <EuiPanel
             hasBorder={false}
             borderRadius="none"
-            paddingSize={!isNavOpen ? 's' : 'l'}
-            style={{ minHeight: '100%' }}
+            paddingSize="s"
             hasShadow={false}
+            color="transparent"
+            style={{ flexGrow: 0 }}
           >
-            {!isNavOpen ? null : (
-              <>
-                <CollapsibleNavTop
-                  navLinks={navLinks}
-                  navigateToApp={navigateToApp}
-                  logos={logos}
-                  onClickBack={() => setCurrentNavGroup(undefined)}
-                  currentNavGroup={currentNavGroup}
-                  shouldShrinkNavigation={!isNavOpen}
-                  onClickShrink={closeNav}
-                  visibleUseCases={visibleUseCases}
-                />
-                <NavGroups
-                  navLinks={navLinksForRender}
-                  navigateToApp={navigateToApp}
-                  onNavItemClick={(event, navItem) => {
-                    if (navItem.title === titleForSeeAll && navItem.category?.id) {
-                      const navGroup = navGroupsMap[navItem.category.id];
-                      onGroupClick(event, navGroup);
-                    }
-                  }}
-                  appId={appId}
-                />
-              </>
+            <CollapsibleNavTop
+              homeLink={homeLink}
+              collapsibleNavHeaderRender={collapsibleNavHeaderRender}
+              navigateToApp={navigateToApp}
+              logos={logos}
+              currentNavGroup={currentNavGroupId ? navGroupsMap[currentNavGroupId] : undefined}
+              shouldShrinkNavigation={!isNavOpen}
+              onClickShrink={closeNav}
+            />
+          </EuiPanel>
+        )}
+        {!isNavOpen ? (
+          <div className="searchBarIcon euiHeaderSectionItemButton">
+            {globalSearchCommands && (
+              <HeaderSearchBarIcon globalSearchCommands={globalSearchCommands} />
+            )}
+          </div>
+        ) : (
+          <EuiPanel
+            hasBorder={false}
+            paddingSize="s"
+            hasShadow={false}
+            className="searchBar-wrapper"
+          >
+            {globalSearchCommands && (
+              <HeaderSearchBar globalSearchCommands={globalSearchCommands} />
             )}
           </EuiPanel>
-        </div>
-        <EuiHorizontalRule margin="none" />
+        )}
+        {!isNavOpen ? null : (
+          <EuiPanel
+            hasBorder={false}
+            borderRadius="none"
+            paddingSize={!isNavOpen ? 's' : 'm'}
+            hasShadow={false}
+            className="eui-yScroll flex-1-container"
+            color="transparent"
+            style={{ paddingTop: 0 }}
+          >
+            <NavGroups
+              navLinks={navLinksForRender}
+              navigateToApp={navigateToApp}
+              onNavItemClick={(event, navItem) => {
+                if (navItem.title === titleForSeeAll && navItem.category?.id) {
+                  const navGroup = navGroupsMap[navItem.category.id];
+                  onGroupClick(event, navGroup);
+                }
+              }}
+              appId={appId}
+              categoryCollapsible={currentNavGroupId === ALL_USE_CASE_ID}
+              currentWorkspaceId={currentWorkspace?.id}
+            />
+          </EuiPanel>
+        )}
+        {
+          // This element is used to push icons to the bottom of left navigation when collapsed
+          !isNavOpen ? <div className="flex-1-container" /> : null
+        }
         <div
           className={classNames({
             'bottom-container': true,
+            'eui-xScroll': isNavOpen,
             'bottom-container-collapsed': !isNavOpen,
+            'bottom-container-expanded': isNavOpen,
           })}
         >
           <HeaderNavControls
@@ -373,5 +280,22 @@ export function CollapsibleNavGroupEnabled({
         </div>
       </div>
     </EuiFlyout>
+  );
+
+  return (
+    <>
+      <EuiHideFor sizes={['xs', 's', 'm']}>{rendeLeftNav()}</EuiHideFor>
+      {isNavOpen ? (
+        <EuiShowFor sizes={['xs', 's', 'm']}>
+          {rendeLeftNav({
+            type: 'overlay',
+            size: undefined,
+            outsideClickCloses: true,
+            paddingSize: undefined,
+            ownFocus: true,
+          })}
+        </EuiShowFor>
+      ) : null}
+    </>
   );
 }

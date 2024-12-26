@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { AppNavLinkStatus, NavGroupType, PublicAppInfo } from '../../../core/public';
+import { AppNavLinkStatus, ChromeNavLink, NavGroupType, PublicAppInfo } from '../../../core/public';
 import {
   featureMatchesConfig,
   filterWorkspaceConfigurableApps,
@@ -13,25 +13,32 @@ import {
   getDataSourcesList,
   convertNavGroupToWorkspaceUseCase,
   isEqualWorkspaceUseCase,
-  USE_CASE_PREFIX,
   prependWorkspaceToBreadcrumbs,
+  getIsOnlyAllowEssentialUseCase,
+  mergeDataSourcesWithConnections,
+  getUseCaseUrl,
 } from './utils';
 import { WorkspaceAvailability } from '../../../core/public';
 import { coreMock } from '../../../core/public/mocks';
-import { WORKSPACE_DETAIL_APP_ID, WORKSPACE_USE_CASES } from '../common/constants';
+import { USE_CASE_PREFIX } from '../common/constants';
+import {
+  SigV4ServiceName,
+  DataSourceEngineType,
+} from '../../../plugins/data_source/common/data_sources';
+import { createMockedRegisteredUseCases } from './mocks';
+import {
+  DATA_SOURCE_SAVED_OBJECT_TYPE,
+  DATA_CONNECTION_SAVED_OBJECT_TYPE,
+} from '../../data_source/common';
+import { DataSourceConnectionType } from '../common/types';
 
 const startMock = coreMock.createStart();
-const STATIC_USE_CASES = [
-  WORKSPACE_USE_CASES.observability,
-  WORKSPACE_USE_CASES['security-analytics'],
-  WORKSPACE_USE_CASES.search,
-  WORKSPACE_USE_CASES.analytics,
-];
+const STATIC_USE_CASES = createMockedRegisteredUseCases();
 const useCaseMock = {
   id: 'foo',
   title: 'Foo',
   description: 'Foo description',
-  features: ['bar'],
+  features: [{ id: 'bar' }, { id: 'baz', title: 'Baz' }],
   systematic: false,
   order: 1,
 };
@@ -347,7 +354,7 @@ describe('workspace utils: isFeatureIdInsideUseCase', () => {
           id: 'foo',
           title: 'Foo',
           description: 'Foo description',
-          features: ['discover'],
+          features: [{ id: 'discover' }],
         },
       ])
     ).toBe(true);
@@ -378,8 +385,20 @@ describe('workspace utils: getDataSourcesList', () => {
       savedObjects: [
         {
           id: 'id1',
-          get: () => {
-            return 'title1';
+          type: DATA_SOURCE_SAVED_OBJECT_TYPE,
+          get: (param: string) => {
+            switch (param) {
+              case 'title':
+                return 'title1';
+              case 'description':
+                return 'description1';
+              case 'dataSourceEngineType':
+                return 'dataSourceEngineType1';
+              case 'type':
+                return 'connectionType1';
+              case 'auth':
+                return 'mock_value';
+            }
           },
         },
       ],
@@ -388,6 +407,67 @@ describe('workspace utils: getDataSourcesList', () => {
       {
         id: 'id1',
         title: 'title1',
+        type: DATA_SOURCE_SAVED_OBJECT_TYPE,
+        auth: 'mock_value',
+        description: 'description1',
+        dataSourceEngineType: 'dataSourceEngineType1',
+        connectionType: 'connectionType1',
+        workspaces: [],
+      },
+    ]);
+  });
+
+  it('should return title for data source object and connectionId as title for data connection object', async () => {
+    mockedSavedObjectClient.find = jest.fn().mockResolvedValue({
+      savedObjects: [
+        {
+          id: 'id1',
+          type: DATA_SOURCE_SAVED_OBJECT_TYPE,
+          get: (param: string) => {
+            switch (param) {
+              case 'title':
+                return 'title1';
+              default:
+                return 'mock_value';
+            }
+          },
+        },
+        {
+          id: 'id2',
+          type: DATA_CONNECTION_SAVED_OBJECT_TYPE,
+          get: (param: string) => {
+            switch (param) {
+              case 'connectionId':
+                return 'connectionId1';
+              case 'title':
+                return undefined;
+              default:
+                return 'mock_value';
+            }
+          },
+        },
+      ],
+    });
+    expect(await getDataSourcesList(mockedSavedObjectClient, [])).toStrictEqual([
+      {
+        id: 'id1',
+        title: 'title1',
+        type: DATA_SOURCE_SAVED_OBJECT_TYPE,
+        auth: 'mock_value',
+        description: 'mock_value',
+        dataSourceEngineType: 'mock_value',
+        connectionType: 'mock_value',
+        workspaces: [],
+      },
+      {
+        id: 'id2',
+        title: 'connectionId1',
+        type: DATA_CONNECTION_SAVED_OBJECT_TYPE,
+        auth: 'mock_value',
+        description: 'mock_value',
+        dataSourceEngineType: 'mock_value',
+        connectionType: 'mock_value',
+        workspaces: [],
       },
     ]);
   });
@@ -398,6 +478,56 @@ describe('workspace utils: getDataSourcesList', () => {
   });
 });
 
+describe('workspace utils: getIsOnlyAllowEssentialUseCase', () => {
+  const mockedSavedObjectClient = startMock.savedObjects.client;
+
+  it('should return true when all data sources are serverless', async () => {
+    mockedSavedObjectClient.find = jest.fn().mockResolvedValue({
+      savedObjects: [
+        {
+          id: 'id1',
+          get: () => {
+            return {
+              credentials: {
+                service: SigV4ServiceName.OpenSearchServerless,
+              },
+            };
+          },
+        },
+      ],
+    });
+    expect(await getIsOnlyAllowEssentialUseCase(mockedSavedObjectClient)).toBe(true);
+  });
+
+  it('should return false when not all data sources are serverless', async () => {
+    mockedSavedObjectClient.find = jest.fn().mockResolvedValue({
+      savedObjects: [
+        {
+          id: 'id1',
+          get: () => {
+            return {
+              credentials: {
+                service: SigV4ServiceName.OpenSearchServerless,
+              },
+            };
+          },
+        },
+        {
+          id: 'id2',
+          get: () => {
+            return {
+              credentials: {
+                service: SigV4ServiceName.OpenSearch,
+              },
+            };
+          },
+        },
+      ],
+    });
+    expect(await getIsOnlyAllowEssentialUseCase(mockedSavedObjectClient)).toBe(false);
+  });
+});
+
 describe('workspace utils: convertNavGroupToWorkspaceUseCase', () => {
   it('should convert nav group to consistent workspace use case', () => {
     expect(
@@ -405,14 +535,16 @@ describe('workspace utils: convertNavGroupToWorkspaceUseCase', () => {
         id: 'foo',
         title: 'Foo',
         description: 'Foo description',
-        navLinks: [{ id: 'bar' }],
+        navLinks: [{ id: 'bar', title: 'Bar' }],
+        icon: 'wsAnalytics',
       })
     ).toEqual({
       id: 'foo',
       title: 'Foo',
       description: 'Foo description',
-      features: ['bar'],
+      features: [{ id: 'bar', title: 'Bar' }],
       systematic: false,
+      icon: 'wsAnalytics',
     });
 
     expect(
@@ -420,14 +552,14 @@ describe('workspace utils: convertNavGroupToWorkspaceUseCase', () => {
         id: 'foo',
         title: 'Foo',
         description: 'Foo description',
-        navLinks: [{ id: 'bar' }],
+        navLinks: [{ id: 'bar', title: 'Bar' }],
         type: NavGroupType.SYSTEM,
       })
     ).toEqual({
       id: 'foo',
       title: 'Foo',
       description: 'Foo description',
-      features: ['bar'],
+      features: [{ id: 'bar', title: 'Bar' }],
       systematic: true,
     });
   });
@@ -482,14 +614,55 @@ describe('workspace utils: isEqualWorkspaceUseCase', () => {
       })
     ).toEqual(false);
   });
-  it('should return false when features content not equal', () => {
+  it('should return false when features id not equal', () => {
     expect(
       isEqualWorkspaceUseCase(useCaseMock, {
         ...useCaseMock,
-        features: ['baz'],
+        features: [{ id: 'baz' }],
       })
     ).toEqual(false);
   });
+  it('should return false when features title not equal', () => {
+    expect(
+      isEqualWorkspaceUseCase(useCaseMock, {
+        ...useCaseMock,
+        features: [{ id: 'bar', title: 'Baz' }],
+      })
+    ).toEqual(false);
+  });
+  it('should return false for duplicate features', () => {
+    expect(
+      isEqualWorkspaceUseCase(
+        { ...useCaseMock, features: [useCaseMock.features[0], useCaseMock.features[0]] },
+        {
+          ...useCaseMock,
+          features: [
+            useCaseMock.features[0],
+            {
+              id: 'another',
+              title: 'Another',
+            },
+          ],
+        }
+      )
+    ).toEqual(false);
+  });
+  it('should return true for multi same features', () => {
+    const anotherFeature = {
+      id: 'another',
+      title: 'Another',
+    };
+    expect(
+      isEqualWorkspaceUseCase(
+        { ...useCaseMock, features: [useCaseMock.features[0], anotherFeature] },
+        {
+          ...useCaseMock,
+          features: [useCaseMock.features[0], anotherFeature],
+        }
+      )
+    ).toEqual(true);
+  });
+
   it('should return true when all properties equal', () => {
     expect(
       isEqualWorkspaceUseCase(useCaseMock, {
@@ -506,19 +679,13 @@ describe('workspace utils: prependWorkspaceToBreadcrumbs', () => {
     features: [`${USE_CASE_PREFIX}search`],
   };
 
-  it('should not enrich breadcrumbs for workspace detail page', () => {
-    const coreStart = coreMock.createStart();
-    prependWorkspaceToBreadcrumbs(coreStart, workspace, WORKSPACE_DETAIL_APP_ID, undefined, {});
-    expect(coreStart.chrome.setBreadcrumbsEnricher).toHaveBeenCalledWith(undefined);
-  });
-
   it('should not enrich breadcrumbs when out a workspace', async () => {
     const coreStart = coreMock.createStart();
-    prependWorkspaceToBreadcrumbs(coreStart, null, 'app1', undefined, {});
+    prependWorkspaceToBreadcrumbs(coreStart, null, {}, []);
     expect(coreStart.chrome.setBreadcrumbsEnricher).not.toHaveBeenCalled();
   });
 
-  it('should enrich breadcrumbs when in a workspace and use workspace use case as current nav group', async () => {
+  it('should enrich breadcrumbs when in a workspace and add workspace name into breadcrumbs', async () => {
     const navGroupSearch = {
       id: 'search',
       title: 'Search',
@@ -533,64 +700,16 @@ describe('workspace utils: prependWorkspaceToBreadcrumbs', () => {
     };
 
     const coreStart = coreMock.createStart();
-    prependWorkspaceToBreadcrumbs(coreStart, workspace, 'app1', undefined, {
-      search: navGroupSearch,
-      ds: navGroupDashboards,
-    });
+    prependWorkspaceToBreadcrumbs(
+      coreStart,
+      workspace,
+      {
+        search: navGroupSearch,
+        ds: navGroupDashboards,
+      },
+      []
+    );
     expect(coreStart.chrome.setBreadcrumbsEnricher).toHaveBeenCalledTimes(1);
-    let calls = coreStart.chrome.setBreadcrumbsEnricher.mock.calls;
-    // calls is an array of arrays, where each inner array represents the arguments for a single call
-    // get the actual enricher
-    let enricher = calls[0][0];
-
-    const breadcrumbs = [{ text: 'test app' }];
-    let enrichedBreadcrumbs = enricher?.(breadcrumbs);
-    expect(enrichedBreadcrumbs).toHaveLength(3);
-    expect(enrichedBreadcrumbs?.[1].text).toEqual('Search');
-
-    // ignore current nav group
-    prependWorkspaceToBreadcrumbs(coreStart, workspace, 'app1', navGroupDashboards, {
-      search: navGroupSearch,
-      ds: navGroupDashboards,
-    });
-    expect(coreStart.chrome.setBreadcrumbsEnricher).toHaveBeenCalledTimes(2);
-    calls = coreStart.chrome.setBreadcrumbsEnricher.mock.calls;
-    // calls is an array of arrays, where each inner array represents the arguments for a single call
-    // get the actual enricher
-    enricher = calls[0][0];
-
-    enrichedBreadcrumbs = enricher?.(breadcrumbs);
-    expect(enrichedBreadcrumbs).toHaveLength(3);
-    expect(enrichedBreadcrumbs?.[1].text).toEqual('Search');
-  });
-
-  it('should enrich breadcrumbs when in a workspace with all use case and use selected nav group', async () => {
-    const workspaceWithAllUseCase = {
-      id: 'workspace-all',
-      name: 'test workspace 1',
-      features: [`${USE_CASE_PREFIX}all`],
-    };
-
-    const navGroupSearch = {
-      id: 'search',
-      title: 'Search',
-      description: 'search desc',
-      navLinks: [],
-    };
-    const navGroupDashboards = {
-      id: 'ds',
-      title: 'Dashboards',
-      description: 'Dashboards desc',
-      navLinks: [],
-    };
-
-    const coreStart = coreMock.createStart();
-    prependWorkspaceToBreadcrumbs(coreStart, workspaceWithAllUseCase, 'app1', navGroupDashboards, {
-      search: navGroupSearch,
-      ds: navGroupDashboards,
-    });
-    expect(coreStart.chrome.setBreadcrumbsEnricher).toHaveBeenCalledTimes(1);
-
     const calls = coreStart.chrome.setBreadcrumbsEnricher.mock.calls;
     // calls is an array of arrays, where each inner array represents the arguments for a single call
     // get the actual enricher
@@ -598,45 +717,142 @@ describe('workspace utils: prependWorkspaceToBreadcrumbs', () => {
 
     const breadcrumbs = [{ text: 'test app' }];
     const enrichedBreadcrumbs = enricher?.(breadcrumbs);
-    expect(enrichedBreadcrumbs).toHaveLength(4);
-    expect(enrichedBreadcrumbs?.[1].text).toEqual(workspaceWithAllUseCase.name);
-    expect(enrichedBreadcrumbs?.[2].text).toEqual(navGroupDashboards.title);
+    expect(enrichedBreadcrumbs).toHaveLength(2);
+    expect(enrichedBreadcrumbs?.[0].text).toMatchInlineSnapshot(`
+      <WorkspaceTitleDisplay
+        availableUseCases={Array []}
+        workspace={
+          Object {
+            "features": Array [
+              "use-case-search",
+            ],
+            "id": "workspace-1",
+            "name": "test workspace 1",
+          }
+        }
+      />
+    `);
+  });
+});
+
+describe('workspace utils: mergeDataSourcesWithConnections', () => {
+  it('should merge data sources with direct query connections', () => {
+    const dataSources = [
+      {
+        id: 'id1',
+        title: 'title1',
+        type: DATA_SOURCE_SAVED_OBJECT_TYPE,
+        dataSourceEngineType: 'OpenSearch' as DataSourceEngineType,
+        description: '',
+      },
+      {
+        id: 'id2',
+        title: 'title2',
+        type: DATA_SOURCE_SAVED_OBJECT_TYPE,
+        dataSourceEngineType: 'OpenSearch' as DataSourceEngineType,
+        description: '',
+      },
+    ];
+    const directQueryConnections = [
+      {
+        id: 'id3',
+        title: 'title3',
+        name: 'name1',
+        parentId: 'id1',
+        description: 'direct_query_connections_1',
+        type: 'Amazon S3',
+        connectionType: DataSourceConnectionType.DirectQueryConnection,
+      },
+    ];
+    const result = mergeDataSourcesWithConnections(dataSources, directQueryConnections);
+    expect(result).toStrictEqual([
+      {
+        connectionType: 1,
+        id: 'id3',
+        name: 'name1',
+        parentId: 'id1',
+        title: 'title3',
+        description: 'direct_query_connections_1',
+        type: 'Amazon S3',
+      },
+      {
+        connectionType: 0,
+        description: '',
+        id: 'id1',
+        name: 'title1',
+        relatedConnections: [
+          {
+            connectionType: 1,
+            id: 'id3',
+            name: 'name1',
+            parentId: 'id1',
+            title: 'title3',
+            type: 'Amazon S3',
+            description: 'direct_query_connections_1',
+          },
+        ],
+        type: 'OpenSearch',
+      },
+      {
+        connectionType: 0,
+        description: '',
+        id: 'id2',
+        name: 'title2',
+        relatedConnections: [],
+        type: 'OpenSearch',
+      },
+    ]);
   });
 
-  it('should enrich breadcrumbs when in a workspace with all use case and current nav group is null', async () => {
-    const workspaceWithAllUseCase = {
-      id: 'workspace-all',
-      name: 'test workspace 1',
-      features: [`${USE_CASE_PREFIX}all`],
-    };
+  it('should not merge data sources or data connections if no direct query connections', () => {
+    const dataSources = [
+      {
+        id: 'id1',
+        title: 'title1',
+        dataSourceEngineType: 'OpenSearch' as DataSourceEngineType,
+        description: '',
+        type: DATA_SOURCE_SAVED_OBJECT_TYPE,
+      },
+      {
+        id: 'id2',
+        title: 'title2',
+        type: DATA_CONNECTION_SAVED_OBJECT_TYPE,
+        connectionType: 'AWS CloudWatch',
+        description: '',
+      },
+    ];
 
-    const navGroupSearch = {
-      id: 'search',
-      title: 'Search',
-      description: 'search desc',
-      navLinks: [],
-    };
-    const navGroupDashboards = {
-      id: 'ds',
-      title: 'Dashboards',
-      description: 'Dashboards desc',
-      navLinks: [],
-    };
+    const result = mergeDataSourcesWithConnections(dataSources, []);
+    expect(result).toStrictEqual([
+      {
+        connectionType: 0,
+        description: '',
+        id: 'id1',
+        name: 'title1',
+        relatedConnections: [],
+        type: 'OpenSearch',
+      },
+      {
+        connectionType: 2,
+        description: '',
+        id: 'id2',
+        name: 'title2',
+        type: 'AWS CloudWatch',
+      },
+    ]);
+  });
+});
 
-    const coreStart = coreMock.createStart();
-    prependWorkspaceToBreadcrumbs(coreStart, workspaceWithAllUseCase, 'app1', undefined, {
-      search: navGroupSearch,
-      ds: navGroupDashboards,
-    });
-    expect(coreStart.chrome.setBreadcrumbsEnricher).toHaveBeenCalledTimes(1);
+describe('workspace utils: getUseCaseUrl', () => {
+  it('should get use case url', () => {
+    startMock.application.getUrlForApp.mockImplementation((id) => `http://localhost/${id}`);
+    const url = getUseCaseUrl(useCaseMock, 'foo', startMock.application, startMock.http);
+    expect(url).toEqual('http://localhost/w/foo/bar');
+  });
 
-    const calls = coreStart.chrome.setBreadcrumbsEnricher.mock.calls;
-    // calls is an array of arrays, where each inner array represents the arguments for a single call
-    // get the actual enricher
-    const enricher = calls[0][0];
-
-    const enrichedBreadcrumbs = enricher?.([{ text: 'overview' }]);
-    expect(enrichedBreadcrumbs).toHaveLength(3);
-    expect(enrichedBreadcrumbs?.[1].text).toEqual(workspaceWithAllUseCase.name);
+  it('should return workspace detail url when there is no use case', () => {
+    startMock.application.getUrlForApp.mockImplementation((id) => `http://localhost/${id}`);
+    const url = getUseCaseUrl(undefined, 'foo', startMock.application, startMock.http);
+    expect(url).toEqual('http://localhost/w/foo/workspace_detail');
   });
 });

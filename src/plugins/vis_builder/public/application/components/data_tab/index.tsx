@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { DropResult, EuiDragDropContext } from '@elastic/eui';
+import { DraggableLocation, DropResult, EuiDragDropContext } from '@elastic/eui';
 import { FieldSelector } from './field_selector';
 
 import './index.scss';
@@ -15,11 +15,12 @@ import { useTypedDispatch, useTypedSelector } from '../../utils/state_management
 import { useOpenSearchDashboards } from '../../../../../opensearch_dashboards_react/public';
 import { VisBuilderServices } from '../../../types';
 import { DropboxDisplay } from './dropbox';
-import { FIELD_SELECTOR_ID } from './constants';
+import { ADD_PANEL_PREFIX, FIELD_SELECTOR_ID } from './constants';
 import { addFieldToConfiguration } from './drag_drop/add_field_to_configuration';
 import { replaceFieldInConfiguration } from './drag_drop/replace_field_in_configuration';
 import { reorderFieldsWithinSchema } from './drag_drop/reorder_fields_within_schema';
 import { moveFieldBetweenSchemas } from './drag_drop/move_field_between_schemas';
+import { validateAggregations } from '../../utils/validations';
 
 export const DATA_TAB_ID = 'data_tab';
 
@@ -39,6 +40,7 @@ export const DataTab = () => {
       data: {
         search: { aggs: aggService },
       },
+      notifications: { toasts },
     },
   } = useOpenSearchDashboards<VisBuilderServices>();
 
@@ -49,6 +51,7 @@ export const DataTab = () => {
       return acc;
     }, {});
   });
+  const [isDragging, setIsDragging] = useState<boolean>(false);
   const dispatch = useTypedDispatch();
 
   useEffect(() => {
@@ -64,6 +67,7 @@ export const DataTab = () => {
 
   const handleDragEnd = (dropResult: DropResult) => {
     try {
+      setIsDragging(false); // Reseting the Dragging flag
       const { source, destination, combine } = dropResult;
 
       const destinationSchemaName = destination?.droppableId || combine?.droppableId;
@@ -75,6 +79,60 @@ export const DataTab = () => {
       }
 
       const panelGroups = Array.from(schemas.all.map((schema) => schema.name));
+      // Check schema order
+      if (destinationSchemaName === 'split') {
+        const validationResult = validateAggregations(aggProps.aggs, schemas.all);
+        if (!validationResult.valid) {
+          toasts.addWarning({
+            title: 'vb_invalid_schema',
+            text: validationResult.errorMsg,
+          });
+          return;
+        }
+      }
+
+      if (destinationSchemaName.startsWith(ADD_PANEL_PREFIX)) {
+        const updatedDestinationSchemaName = destinationSchemaName.split(ADD_PANEL_PREFIX)[1];
+
+        if (Object.values(FIELD_SELECTOR_ID).includes(sourceSchemaName as FIELD_SELECTOR_ID)) {
+          if (panelGroups.includes(updatedDestinationSchemaName)) {
+            const newDropResult = {
+              ...dropResult,
+              destination: {
+                droppableId: updatedDestinationSchemaName,
+                index: 0,
+              } as DraggableLocation,
+            };
+            addFieldToConfiguration({
+              dropResult: newDropResult,
+              aggProps,
+              aggService,
+              activeSchemaFields,
+              dispatch,
+              schemas,
+            });
+          }
+        } else if (panelGroups.includes(sourceSchemaName)) {
+          if (panelGroups.includes(updatedDestinationSchemaName)) {
+            const newDropResult = {
+              ...dropResult,
+              destination: {
+                droppableId: updatedDestinationSchemaName,
+                index: 0,
+              } as DraggableLocation,
+            };
+            moveFieldBetweenSchemas({
+              dropResult: newDropResult,
+              aggProps,
+              aggService,
+              activeSchemaFields,
+              dispatch,
+              schemas,
+            });
+          }
+        }
+        return;
+      }
 
       if (Object.values(FIELD_SELECTOR_ID).includes(sourceSchemaName as FIELD_SELECTOR_ID)) {
         if (panelGroups.includes(destinationSchemaName) && !combine) {
@@ -134,7 +192,7 @@ export const DataTab = () => {
   };
 
   return (
-    <EuiDragDropContext onDragEnd={handleDragEnd}>
+    <EuiDragDropContext onDragEnd={handleDragEnd} onDragStart={() => setIsDragging(true)}>
       <div className="vbDataTab">
         <FieldSelector />
         <ConfigPanel
@@ -143,6 +201,7 @@ export const DataTab = () => {
           aggProps={aggProps}
           activeSchemaFields={activeSchemaFields}
           setActiveSchemaFields={setActiveSchemaFields}
+          isDragging={isDragging}
         />
       </div>
     </EuiDragDropContext>

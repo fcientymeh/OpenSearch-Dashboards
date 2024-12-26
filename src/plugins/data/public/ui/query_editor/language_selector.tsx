@@ -4,117 +4,142 @@
  */
 
 import {
-  PopoverAnchorPosition,
+  EuiContextMenuItem,
   EuiContextMenuPanel,
   EuiPopover,
-  EuiButtonEmpty,
-  EuiContextMenuItem,
+  EuiSmallButtonEmpty,
+  PopoverAnchorPosition,
 } from '@elastic/eui';
-import { i18n } from '@osd/i18n';
-import React, { useState } from 'react';
-import { getUiService } from '../../services';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { isEqual } from 'lodash';
+import { LanguageConfig } from '../../query';
+import { getQueryService } from '../../services';
 
 export interface QueryLanguageSelectorProps {
-  language: string;
   onSelectLanguage: (newLanguage: string) => void;
   anchorPosition?: PopoverAnchorPosition;
   appName?: string;
 }
 
-const mapExternalLanguageToOptions = (language: string) => {
+interface LanguageOption {
+  label: string;
+  value: string;
+}
+
+const mapExternalLanguageToOptions = (language: LanguageConfig): LanguageOption => {
   return {
-    label: language,
-    value: language,
+    label: language.title,
+    value: language.id,
   };
 };
 
 export const QueryLanguageSelector = (props: QueryLanguageSelectorProps) => {
+  const queryString = getQueryService().queryString;
+  const languageService = queryString.getLanguageService();
+
   const [isPopoverOpen, setPopover] = useState(false);
+  const [currentLanguage, setCurrentLanguage] = useState<string>(
+    queryString.getQuery()?.language || languageService.getDefaultLanguage()?.id || ''
+  );
+  const [languageOptions, setLanguageOptions] = useState<LanguageOption[]>([]);
 
-  const onButtonClick = () => {
-    setPopover(!isPopoverOpen);
-  };
+  useEffect(() => {
+    const updateState = () => {
+      const query = queryString.getQuery();
+      const language = query.language || languageService.getDefaultLanguage()?.id;
+      const dataset = query.dataset;
 
-  const dqlLabel = i18n.translate('data.query.queryEditor.dqlLanguageName', {
-    defaultMessage: 'DQL',
-  });
-  const luceneLabel = i18n.translate('data.query.queryEditor.luceneLanguageName', {
-    defaultMessage: 'Lucene',
-  });
+      // Update current language if changed
+      if (language !== currentLanguage) {
+        setCurrentLanguage(language || '');
+      }
 
-  const languageOptions = [
-    {
-      label: dqlLabel,
-      value: 'kuery',
+      // Get supported languages
+      const languages = !dataset
+        ? languageService.getLanguages().map((l) => l.id)
+        : queryString.getDatasetService().getType(dataset.type)?.supportedLanguages(dataset) ??
+          null;
+
+      if (!languages) {
+        return;
+      }
+
+      // Build new options including app support check
+      const newOptions = languageService
+        .getLanguages()
+        .filter(
+          (lang) =>
+            languages.includes(lang.id) &&
+            (!props.appName || lang.editorSupportedAppNames?.includes(props.appName))
+        )
+        .map(mapExternalLanguageToOptions)
+        .sort((a, b) => a.label.localeCompare(b.label));
+
+      if (!isEqual(newOptions, languageOptions)) {
+        setLanguageOptions(newOptions);
+      }
+    };
+
+    updateState();
+
+    const subscription = queryString.getUpdates$().subscribe(() => {
+      updateState();
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [currentLanguage, languageOptions, languageService, queryString, props.appName]);
+
+  const selectedLanguage = useMemo(
+    () => ({
+      label:
+        languageOptions.find(
+          (option) => option.value.toLowerCase() === currentLanguage.toLowerCase()
+        )?.label ?? languageOptions[0]?.label,
+    }),
+    [languageOptions, currentLanguage]
+  );
+
+  const handleLanguageChange = useCallback(
+    (newLanguage: string) => {
+      setCurrentLanguage(newLanguage);
+      props.onSelectLanguage(newLanguage);
+      languageService.setUserQueryLanguage(newLanguage);
+      setPopover(false);
     },
-    {
-      label: luceneLabel,
-      value: 'lucene',
-    },
-  ];
+    [props, languageService]
+  );
 
-  const uiService = getUiService();
-
-  const queryEnhancements = uiService.Settings.getAllQueryEnhancements();
-  queryEnhancements.forEach((enhancement) => {
-    if (
-      (enhancement.supportedAppNames &&
-        props.appName &&
-        !enhancement.supportedAppNames.includes(props.appName)) ||
-      uiService.Settings.getUserQueryLanguageBlocklist().includes(
-        enhancement.language.toLowerCase()
-      )
-    )
-      return;
-    languageOptions.unshift(mapExternalLanguageToOptions(enhancement.language));
-  });
-
-  const selectedLanguage = {
-    label:
-      (languageOptions.find(
-        (option) => (option.value as string).toLowerCase() === props.language.toLowerCase()
-      )?.label as string) ?? languageOptions[0].label,
-  };
-
-  const handleLanguageChange = (newLanguage: string) => {
-    props.onSelectLanguage(newLanguage);
-    uiService.Settings.setUserQueryLanguage(newLanguage);
-  };
-
-  uiService.Settings.setUserQueryLanguage(props.language);
-
-  const languageOptionsMenu = languageOptions
-    .sort((a, b) => {
-      return a.label.localeCompare(b.label);
-    })
-    .map((language) => {
-      return (
+  const languageOptionsMenu = useMemo(
+    () =>
+      languageOptions.map((language) => (
         <EuiContextMenuItem
           key={language.label}
           className="languageSelector__menuItem"
+          data-test-subj="languageSelectorMenuItem"
           icon={language.label === selectedLanguage.label ? 'check' : 'empty'}
-          onClick={() => {
-            setPopover(false);
-            handleLanguageChange(language.value);
-          }}
+          onClick={() => handleLanguageChange(language.value)}
         >
           {language.label}
         </EuiContextMenuItem>
-      );
-    });
+      )),
+    [languageOptions, selectedLanguage.label, handleLanguageChange]
+  );
+
   return (
     <EuiPopover
       className="languageSelector"
       button={
-        <EuiButtonEmpty
+        <EuiSmallButtonEmpty
           iconSide="right"
-          iconSize="s"
-          onClick={onButtonClick}
+          onClick={() => setPopover(!isPopoverOpen)}
           className="languageSelector__button"
-          iconType={'arrowDown'}
+          iconType="arrowDown"
+          data-test-subj="queryEditorLanguageSelector"
         >
           {selectedLanguage.label}
-        </EuiButtonEmpty>
+        </EuiSmallButtonEmpty>
       }
       isOpen={isPopoverOpen}
       closePopover={() => setPopover(false)}
@@ -127,6 +152,7 @@ export const QueryLanguageSelector = (props: QueryLanguageSelectorProps) => {
         )}
         size="s"
         items={languageOptionsMenu}
+        data-test-subj="queryEditorLanguageOptions"
       />
     </EuiPopover>
   );

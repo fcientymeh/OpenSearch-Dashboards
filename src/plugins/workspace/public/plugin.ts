@@ -7,7 +7,6 @@ import { BehaviorSubject, combineLatest, Subscription } from 'rxjs';
 import React from 'react';
 import { i18n } from '@osd/i18n';
 import { map } from 'rxjs/operators';
-import { EuiIcon } from '@elastic/eui';
 import {
   Plugin,
   CoreStart,
@@ -29,14 +28,21 @@ import {
   WORKSPACE_DETAIL_APP_ID,
   WORKSPACE_CREATE_APP_ID,
   WORKSPACE_LIST_APP_ID,
-  WORKSPACE_USE_CASES,
+  WORKSPACE_INITIAL_APP_ID,
+  WORKSPACE_NAVIGATION_APP_ID,
+  WORKSPACE_COLLABORATORS_APP_ID,
 } from '../common/constants';
 import { getWorkspaceIdFromUrl } from '../../../core/public/utils';
-import { Services, WorkspaceUseCase } from './types';
+import { Services, WorkspaceUseCase, WorkspacePluginSetup } from './types';
 import { WorkspaceClient } from './workspace_client';
 import { SavedObjectsManagementPluginSetup } from '../../../plugins/saved_objects_management/public';
 import { ManagementSetup } from '../../../plugins/management/public';
-import { ContentManagementPluginStart } from '../../../plugins/content_management/public';
+import {
+  ANALYTICS_ALL_OVERVIEW_PAGE_ID,
+  ContentManagementPluginSetup,
+  ContentManagementPluginStart,
+  ESSENTIAL_OVERVIEW_PAGE_ID,
+} from '../../../plugins/content_management/public';
 import { WorkspaceMenu } from './components/workspace_menu/workspace_menu';
 import { getWorkspaceColumn } from './components/workspace_column';
 import { DataSourceManagementPluginSetup } from '../../../plugins/data_source_management/public';
@@ -44,15 +50,29 @@ import {
   enrichBreadcrumbsWithWorkspace,
   filterWorkspaceConfigurableApps,
   getFirstUseCaseOfFeatureConfigs,
+  getUseCaseUrl,
   isAppAccessibleInWorkspace,
   isNavGroupInFeatureConfigs,
 } from './utils';
 import { recentWorkspaceManager } from './recent_workspace_manager';
 import { toMountPoint } from '../../opensearch_dashboards_react/public';
-import { UseCaseService } from './services/use_case_service';
 import { WorkspaceListCard } from './components/service_card';
-import { UseCaseFooter } from './components/home_get_start_card';
-import { HOME_CONTENT_AREAS } from '../../home/public';
+import { NavigationPublicPluginStart } from '../../../plugins/navigation/public';
+import { WorkspaceSelector } from './components/workspace_selector/workspace_selector';
+import { HOME_CONTENT_AREAS } from '../../../plugins/content_management/public';
+import {
+  registerEssentialOverviewContent,
+  setEssentialOverviewSection,
+} from './components/use_case_overview';
+import {
+  registerAnalyticsAllOverviewContent,
+  setAnalyticsAllOverviewSection,
+} from './components/use_case_overview/setup_overview';
+import { UserDefaultWorkspace } from './components/workspace_list/default_workspace';
+import { WorkspaceCollaboratorTypesService, UseCaseService } from './services';
+import { AddCollaboratorsModal } from './components/add_collaborators_modal';
+import { registerDefaultCollaboratorTypes } from './register_default_collaborator_types';
+import { searchPages } from './components/global_search/search_pages_command';
 
 type WorkspaceAppType = (
   params: AppMountParameters,
@@ -64,14 +84,16 @@ interface WorkspacePluginSetupDeps {
   savedObjectsManagement?: SavedObjectsManagementPluginSetup;
   management?: ManagementSetup;
   dataSourceManagement?: DataSourceManagementPluginSetup;
+  contentManagement?: ContentManagementPluginSetup;
 }
 
 export interface WorkspacePluginStartDeps {
   contentManagement: ContentManagementPluginStart;
+  navigation: NavigationPublicPluginStart;
 }
 
 export class WorkspacePlugin
-  implements Plugin<{}, {}, WorkspacePluginSetupDeps, WorkspacePluginStartDeps> {
+  implements Plugin<WorkspacePluginSetup, {}, WorkspacePluginSetupDeps, WorkspacePluginStartDeps> {
   private coreStart?: CoreStart;
   private currentWorkspaceSubscription?: Subscription;
   private breadcrumbsSubscription?: Subscription;
@@ -84,6 +106,9 @@ export class WorkspacePlugin
   private registeredUseCasesUpdaterSubscription?: Subscription;
   private workspaceAndUseCasesCombineSubscription?: Subscription;
   private useCase = new UseCaseService();
+  private workspaceClient?: WorkspaceClient;
+  private collaboratorTypes = new WorkspaceCollaboratorTypesService();
+  private collaboratorsAppUpdater$ = new BehaviorSubject<AppUpdater>(() => undefined);
 
   private _changeSavedObjectCurrentWorkspace() {
     if (this.coreStart) {
@@ -101,24 +126,20 @@ export class WorkspacePlugin
    */
   private filterNavLinks = (core: CoreStart) => {
     const currentWorkspace$ = core.workspaces.currentWorkspace$;
-
     this.workspaceAndUseCasesCombineSubscription?.unsubscribe();
     this.workspaceAndUseCasesCombineSubscription = combineLatest([
       currentWorkspace$,
       this.registeredUseCases$,
     ]).subscribe(([currentWorkspace, registeredUseCases]) => {
       if (currentWorkspace) {
-        const isAllUseCase =
-          getFirstUseCaseOfFeatureConfigs(currentWorkspace.features || []) === ALL_USE_CASE_ID;
-        this.appUpdater$.next((app) => {
-          // When in all workspace, the home should be replaced by workspace detail page
-          if (app.id === 'home' && isAllUseCase) {
-            return { navLinkStatus: AppNavLinkStatus.hidden };
-          }
+        const workspaceUseCase = currentWorkspace.features
+          ? getFirstUseCaseOfFeatureConfigs(currentWorkspace.features)
+          : undefined;
 
-          // show the overview page in all use case
-          if (app.id === WORKSPACE_DETAIL_APP_ID && isAllUseCase) {
-            return { navLinkStatus: AppNavLinkStatus.visible };
+        this.appUpdater$.next((app) => {
+          // essential use overview is only available in essential workspace
+          if (app.id === ESSENTIAL_OVERVIEW_PAGE_ID && workspaceUseCase === ALL_USE_CASE_ID) {
+            return { status: AppStatus.inaccessible };
           }
 
           if (isAppAccessibleInWorkspace(app, currentWorkspace, registeredUseCases)) {
@@ -129,7 +150,8 @@ export class WorkspacePlugin
           }
           if (
             registeredUseCases.some(
-              (useCase) => useCase.systematic && useCase.features.includes(app.id)
+              (useCase) =>
+                useCase.systematic && useCase.features.some((feature) => feature.id === app.id)
             )
           ) {
             return;
@@ -150,17 +172,15 @@ export class WorkspacePlugin
           /**
            * The following logic determines whether a navigation group should be hidden or not based on the workspace's feature configurations.
            * It checks the following conditions:
-           * 1. The navigation group is not a system-level group (system groups are always visible).
+           * 1. The navigation group is not a system-level group.
            * 2. The current workspace has feature configurations set up.
-           * 3. The current workspace's use case it not "All use case".
-           * 4. The current navigation group is not included in the feature configurations of the workspace.
+           * 3. The current navigation group is not included in the feature configurations of the workspace.
            *
            * If all these conditions are true, it means that the navigation group should be hidden.
            */
           if (
             navGroup.type !== NavGroupType.SYSTEM &&
             currentWorkspace.features &&
-            getFirstUseCaseOfFeatureConfigs(currentWorkspace.features) !== ALL_USE_CASE_ID &&
             !isNavGroupInFeatureConfigs(navGroup.id, currentWorkspace.features)
           ) {
             return {
@@ -235,11 +255,25 @@ export class WorkspacePlugin
   }
 
   public async setup(
-    core: CoreSetup,
-    { savedObjectsManagement, management, dataSourceManagement }: WorkspacePluginSetupDeps
+    core: CoreSetup<WorkspacePluginStartDeps>,
+    {
+      savedObjectsManagement,
+      management,
+      dataSourceManagement,
+      contentManagement,
+    }: WorkspacePluginSetupDeps
   ) {
     const workspaceClient = new WorkspaceClient(core.http, core.workspaces);
     await workspaceClient.init();
+    this.workspaceClient = workspaceClient;
+    core.workspaces.setClient(workspaceClient);
+
+    this.useCase.setup({
+      chrome: core.chrome,
+      getStartServices: core.getStartServices,
+      workspaces: core.workspaces,
+    });
+
     core.application.registerAppUpdater(this.appUpdater$);
     this.unregisterNavGroupUpdater = core.chrome.navGroup.registerNavGroupUpdater(
       this.navGroupUpdater$
@@ -295,11 +329,14 @@ export class WorkspacePlugin
     }
 
     const mountWorkspaceApp = async (params: AppMountParameters, renderApp: WorkspaceAppType) => {
-      const [coreStart] = await core.getStartServices();
+      const [coreStart, { navigation }] = await core.getStartServices();
+
       const services = {
         ...coreStart,
         workspaceClient,
         dataSourceManagement,
+        collaboratorTypes: this.collaboratorTypes,
+        navigationUI: navigation.ui,
       };
 
       return renderApp(params, services, {
@@ -340,11 +377,72 @@ export class WorkspacePlugin
       title: i18n.translate('workspace.settings.workspaceDetail', {
         defaultMessage: 'Workspace Detail',
       }),
-      navLinkStatus: AppNavLinkStatus.hidden,
+      navLinkStatus: core.chrome.navGroup.getNavGroupEnabled()
+        ? AppNavLinkStatus.visible
+        : AppNavLinkStatus.hidden,
       async mount(params: AppMountParameters) {
         const { renderDetailApp } = await import('./application');
         return mountWorkspaceApp(params, renderDetailApp);
       },
+    });
+
+    /**
+     * register workspace collaborators page
+     */
+    core.application.register({
+      id: WORKSPACE_COLLABORATORS_APP_ID,
+      title: i18n.translate('workspace.settings.workspaceCollaborators', {
+        defaultMessage: 'Collaborators',
+      }),
+      navLinkStatus: core.chrome.navGroup.getNavGroupEnabled()
+        ? AppNavLinkStatus.visible
+        : AppNavLinkStatus.hidden,
+      async mount(params: AppMountParameters) {
+        const { renderCollaboratorsApp } = await import('./application');
+        return mountWorkspaceApp(params, renderCollaboratorsApp);
+      },
+      updater$: this.collaboratorsAppUpdater$,
+    });
+
+    // workspace initial page
+    core.application.register({
+      id: WORKSPACE_INITIAL_APP_ID,
+      title: i18n.translate('workspace.settings.workspaceInitial', {
+        defaultMessage: 'Workspace Initial',
+      }),
+      navLinkStatus: AppNavLinkStatus.hidden,
+      chromeless: true,
+      async mount(params: AppMountParameters) {
+        const { renderInitialApp } = await import('./application');
+        return mountWorkspaceApp(params, renderInitialApp);
+      },
+      workspaceAvailability: WorkspaceAvailability.outsideWorkspace,
+    });
+
+    const registeredUseCases$ = this.registeredUseCases$;
+    // register workspace navigation
+    core.application.register({
+      id: WORKSPACE_NAVIGATION_APP_ID,
+      title: '',
+      chromeless: true,
+      navLinkStatus: AppNavLinkStatus.hidden,
+      async mount() {
+        const [coreStart] = await core.getStartServices();
+        const { application, http, workspaces } = coreStart;
+        const workspace = workspaces.currentWorkspace$.getValue();
+        if (workspace) {
+          const availableUseCases = registeredUseCases$.getValue();
+          const currentUseCase = availableUseCases.find(
+            (useCase) => useCase.id === getFirstUseCaseOfFeatureConfigs(workspace?.features ?? [])
+          );
+          const useCaseUrl = getUseCaseUrl(currentUseCase, workspace.id, application, http);
+          application.navigateToUrl(useCaseUrl);
+        } else {
+          application.navigateToApp('home');
+        }
+        return () => {};
+      },
+      workspaceAvailability: WorkspaceAvailability.insideWorkspace,
     });
 
     // workspace list
@@ -359,6 +457,9 @@ export class WorkspacePlugin
       navLinkStatus: core.chrome.navGroup.getNavGroupEnabled()
         ? AppNavLinkStatus.visible
         : AppNavLinkStatus.hidden,
+      description: i18n.translate('workspace.workspaceList.description', {
+        defaultMessage: 'Organize collaborative projects in use-case-specific workspaces.',
+      }),
       async mount(params: AppMountParameters) {
         const { renderListApp } = await import('./application');
         return mountWorkspaceApp(params, renderListApp);
@@ -366,29 +467,84 @@ export class WorkspacePlugin
       workspaceAvailability: WorkspaceAvailability.outsideWorkspace,
     });
 
-    core.chrome.navGroup.addNavLinksToGroup(DEFAULT_NAV_GROUPS.all, [
-      {
-        id: WORKSPACE_DETAIL_APP_ID,
-        order: 100,
-        title: i18n.translate('workspace.nav.workspaceDetail.title', {
-          defaultMessage: 'Overview',
-        }),
-      },
-    ]);
+    if (core.chrome.navGroup.getNavGroupEnabled() && contentManagement) {
+      // workspace essential use case overview
+      core.application.register({
+        id: ESSENTIAL_OVERVIEW_PAGE_ID,
+        title: '',
+        async mount(params: AppMountParameters) {
+          const { renderUseCaseOverviewApp } = await import('./application');
+          const [
+            coreStart,
+            { contentManagement: contentManagementStart },
+          ] = await core.getStartServices();
+          const services = {
+            ...coreStart,
+            workspaceClient,
+            dataSourceManagement,
+            contentManagement: contentManagementStart,
+          };
 
-    core.chrome.navGroup.addNavLinksToGroup(DEFAULT_NAV_GROUPS.settingsAndSetup, [
-      {
-        id: WORKSPACE_LIST_APP_ID,
-        title: i18n.translate('workspace.settingsAndSetup.workspaceSettings', {
-          defaultMessage: 'workspace settings',
-        }),
-      },
-    ]);
+          return renderUseCaseOverviewApp(params, services, ESSENTIAL_OVERVIEW_PAGE_ID);
+        },
+        workspaceAvailability: WorkspaceAvailability.insideWorkspace,
+      });
+
+      core.chrome.navGroup.addNavLinksToGroup(DEFAULT_NAV_GROUPS.essentials, [
+        {
+          id: ESSENTIAL_OVERVIEW_PAGE_ID,
+          order: -1,
+          title: i18n.translate('workspace.nav.essential_overview.title', {
+            defaultMessage: 'Overview',
+          }),
+        },
+      ]);
+
+      // initial the page structure
+      setEssentialOverviewSection(contentManagement);
+
+      // register workspace Analytics(all) use case overview app
+      core.application.register({
+        id: ANALYTICS_ALL_OVERVIEW_PAGE_ID,
+        title: '',
+        async mount(params: AppMountParameters) {
+          const { renderUseCaseOverviewApp } = await import('./application');
+          const [
+            coreStart,
+            { contentManagement: contentManagementStart },
+          ] = await core.getStartServices();
+          const services = {
+            ...coreStart,
+            workspaceClient,
+            dataSourceManagement,
+            contentManagement: contentManagementStart,
+          };
+
+          return renderUseCaseOverviewApp(params, services, ANALYTICS_ALL_OVERVIEW_PAGE_ID);
+        },
+        workspaceAvailability: WorkspaceAvailability.insideWorkspace,
+      });
+
+      core.chrome.navGroup.addNavLinksToGroup(DEFAULT_NAV_GROUPS.all, [
+        {
+          id: ANALYTICS_ALL_OVERVIEW_PAGE_ID,
+          order: -1,
+          title: i18n.translate('workspace.nav.analyticsAll_overview.title', {
+            defaultMessage: 'Overview',
+          }),
+        },
+      ]);
+
+      // initial the page structure
+      setAnalyticsAllOverviewSection(contentManagement);
+    }
 
     /**
-     * register workspace column into saved objects table
+     * Only register workspace column into saved objects table when out of workspace
      */
-    savedObjectsManagement?.columns.register(getWorkspaceColumn(core));
+    if (!core.workspaces.currentWorkspaceId$.getValue()) {
+      savedObjectsManagement?.columns.register(getWorkspaceColumn(core));
+    }
 
     /**
      * Add workspace list to settings and setup group
@@ -396,52 +552,57 @@ export class WorkspacePlugin
     core.chrome.navGroup.addNavLinksToGroup(DEFAULT_NAV_GROUPS.settingsAndSetup, [
       {
         id: WORKSPACE_LIST_APP_ID,
-        order: 150,
-        title: i18n.translate('workspace.settings.workspaceSettings', {
-          defaultMessage: 'Workspace settings',
+        order: 350,
+        title: i18n.translate('workspace.settings.workspaces', {
+          defaultMessage: 'Workspaces',
         }),
       },
     ]);
 
-    return {};
-  }
-
-  private registerGetStartedCardToNewHome(
-    core: CoreStart,
-    contentManagement: ContentManagementPluginStart
-  ) {
-    const useCases = [
-      WORKSPACE_USE_CASES.observability,
-      WORKSPACE_USE_CASES['security-analytics'],
-      WORKSPACE_USE_CASES.search,
-      WORKSPACE_USE_CASES.analytics,
-    ];
-
-    useCases.forEach((useCase, index) => {
-      contentManagement.registerContentProvider({
-        id: `home_get_start_${useCase.id}`,
-        getTargetArea: () => HOME_CONTENT_AREAS.GET_STARTED,
-        getContent: () => ({
-          id: useCase.id,
-          kind: 'card',
-          order: (index + 1) * 1000,
-          description: useCase.description,
-          title: useCase.title,
-          getIcon: () => React.createElement(EuiIcon, { size: 'xl', type: 'logoOpenSearch' }),
-          getFooter: () =>
-            React.createElement(UseCaseFooter, {
-              useCaseId: useCase.id,
-              useCaseTitle: useCase.title,
-              core,
-              registeredUseCases$: this.registeredUseCases$,
-            }),
-        }),
-      });
+    core.chrome.globalSearch.registerSearchCommand({
+      id: 'pagesSearch',
+      type: 'PAGES',
+      run: async (query: string, callback: () => void) =>
+        searchPages(query, this.registeredUseCases$, this.coreStart, callback),
     });
+
+    if (workspaceId) {
+      core.chrome.registerCollapsibleNavHeader(() => {
+        if (!this.coreStart) {
+          return null;
+        }
+        return React.createElement(WorkspaceSelector, {
+          key: 'workspaceSelector',
+          coreStart: this.coreStart,
+          registeredUseCases$: this.registeredUseCases$,
+        });
+      });
+    }
+
+    registerDefaultCollaboratorTypes({
+      getStartServices: core.getStartServices,
+      collaboratorTypesService: this.collaboratorTypes,
+    });
+
+    return {
+      collaboratorTypes: this.collaboratorTypes,
+      ui: {
+        AddCollaboratorsModal,
+      },
+    };
   }
 
-  public start(core: CoreStart, { contentManagement }: WorkspacePluginStartDeps) {
+  public start(core: CoreStart, { contentManagement, navigation }: WorkspacePluginStartDeps) {
     this.coreStart = core;
+    const isPermissionEnabled = core?.application?.capabilities.workspaces.permissionEnabled;
+    this.collaboratorsAppUpdater$.next(() => {
+      return {
+        status: isPermissionEnabled ? AppStatus.accessible : AppStatus.inaccessible,
+        navLinkStatus: core.chrome.navGroup.getNavGroupEnabled()
+          ? AppNavLinkStatus.visible
+          : AppNavLinkStatus.hidden,
+      };
+    });
 
     this.currentWorkspaceIdSubscription = this._changeSavedObjectCurrentWorkspace();
 
@@ -477,11 +638,17 @@ export class WorkspacePlugin
       // register workspace list in home page
       this.registerWorkspaceListToHome(core, contentManagement);
 
-      // register get started card in new home page
-      this.registerGetStartedCardToNewHome(core, contentManagement);
+      // register workspace list to user settings page
+      this.registerWorkspaceListToUserSettings(core, contentManagement, navigation);
 
       // set breadcrumbs enricher for workspace
-      this.breadcrumbsSubscription = enrichBreadcrumbsWithWorkspace(core);
+      this.breadcrumbsSubscription = enrichBreadcrumbsWithWorkspace(core, this.registeredUseCases$);
+
+      // register content to essential overview page
+      registerEssentialOverviewContent(contentManagement, core);
+
+      // register content to analytics(All) overview page
+      registerAnalyticsAllOverviewContent(contentManagement, core);
     }
     return {};
   }
@@ -497,9 +664,39 @@ export class WorkspacePlugin
           id: 'workspace_list',
           kind: 'custom',
           order: 0,
+          width: 16,
           render: () => React.createElement(WorkspaceListCard, { core }),
         }),
         getTargetArea: () => HOME_CONTENT_AREAS.SERVICE_CARDS,
+      });
+    }
+  }
+
+  private async registerWorkspaceListToUserSettings(
+    coreStart: CoreStart,
+    contentManagement: ContentManagementPluginStart,
+    navigation: NavigationPublicPluginStart
+  ) {
+    if (contentManagement) {
+      const services: Services = {
+        ...coreStart,
+        workspaceClient: this.workspaceClient!,
+        navigationUI: navigation.ui,
+        collaboratorTypes: this.collaboratorTypes,
+      };
+      contentManagement.registerContentProvider({
+        id: 'default_workspace_list',
+        getContent: () => ({
+          id: 'default_workspace_list',
+          kind: 'custom',
+          order: 0,
+          render: () =>
+            React.createElement(UserDefaultWorkspace, {
+              services,
+              registeredUseCases$: this.registeredUseCases$,
+            }),
+        }),
+        getTargetArea: () => 'user_settings/default_workspace',
       });
     }
   }
@@ -512,5 +709,7 @@ export class WorkspacePlugin
     this.unregisterNavGroupUpdater?.();
     this.registeredUseCasesUpdaterSubscription?.unsubscribe();
     this.workspaceAndUseCasesCombineSubscription?.unsubscribe();
+    this.useCase.stop();
+    this.collaboratorTypes.stop();
   }
 }

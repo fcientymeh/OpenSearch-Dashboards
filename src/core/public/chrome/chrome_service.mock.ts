@@ -41,6 +41,9 @@ const createSetupContractMock = () => {
       getNavGroupEnabled: jest.fn(),
       registerNavGroupUpdater: jest.fn(),
     },
+    globalSearch: {
+      registerSearchCommand: jest.fn(),
+    },
   };
 };
 
@@ -83,9 +86,14 @@ const createStartContractMock = () => {
       getCurrentNavGroup$: jest.fn(() => new BehaviorSubject(undefined)),
       setCurrentNavGroup: jest.fn(),
     },
+    globalSearch: {
+      getAllSearchCommands: jest.fn(() => []),
+    },
     setAppTitle: jest.fn(),
     setIsVisible: jest.fn(),
     getIsVisible$: jest.fn(),
+    setHeaderVariant: jest.fn(),
+    getHeaderVariant$: jest.fn(),
     addApplicationClass: jest.fn(),
     removeApplicationClass: jest.fn(),
     getApplicationClasses$: jest.fn(),
@@ -104,6 +112,7 @@ const createStartContractMock = () => {
   };
   startContract.navLinks.getAll.mockReturnValue([]);
   startContract.getIsVisible$.mockReturnValue(new BehaviorSubject(false));
+  startContract.getHeaderVariant$.mockReturnValue(new BehaviorSubject(undefined));
   startContract.getApplicationClasses$.mockReturnValue(new BehaviorSubject(['class-name']));
   startContract.getBadge$.mockReturnValue(new BehaviorSubject({} as ChromeBadge));
   startContract.getBreadcrumbs$.mockReturnValue(new BehaviorSubject([{} as ChromeBreadcrumb]));

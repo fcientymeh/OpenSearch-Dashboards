@@ -3,136 +3,86 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { i18n } from '@osd/i18n';
 import {
   EuiCard,
-  EuiFlexGrid,
   EuiFlexGroup,
   EuiFlexItem,
   EuiPageContent,
-  EuiPageHeader,
-  EuiPageHeaderSection,
-  EuiPanel,
   EuiSpacer,
   EuiTitle,
 } from '@elastic/eui';
 import { AppCategory, ChromeNavLink, CoreStart } from 'opensearch-dashboards/public';
 import React, { useMemo } from 'react';
+import { NavigationPublicPluginStart } from '../../../../../../src/plugins/navigation/public';
 
 export interface FeatureCardsProps {
-  pageTitle: string;
+  pageDescription: string;
   navLinks: ChromeNavLink[];
   navigateToApp: CoreStart['application']['navigateToApp'];
-  getStartedCards: Array<{
-    id: string;
-    title: string;
-    description: string;
-  }>;
+  setAppDescriptionControls: CoreStart['application']['setAppDescriptionControls'];
+  navigationUI: NavigationPublicPluginStart['ui'];
 }
-
-const getStartedTitle = i18n.translate('management.gettingStarted.label', {
-  defaultMessage: 'Get started',
-});
 
 export const FeatureCards = ({
   navLinks,
   navigateToApp,
-  pageTitle,
-  getStartedCards,
+  setAppDescriptionControls,
+  pageDescription,
+  navigationUI: { HeaderControl },
 }: FeatureCardsProps) => {
-  const itemsPerRow = 4;
   const groupedCardForDisplay = useMemo(() => {
-    const grouped: Array<{ category?: AppCategory; navLinks: ChromeNavLink[][] }> = [];
+    const grouped: Array<{ category?: AppCategory; navLinks: ChromeNavLink[] }> = [];
+    let lastGroup: { category?: AppCategory; navLinks: ChromeNavLink[] } | undefined;
     // The navLinks has already been sorted based on link / category's order,
     // so it is safe to group the links here.
     navLinks.forEach((link) => {
-      let lastGroup = grouped.length ? grouped[grouped.length - 1] : undefined;
-      if (!lastGroup || lastGroup.category !== link.category) {
-        lastGroup = { category: link.category, navLinks: [[]] };
+      if (!lastGroup || lastGroup.category?.id !== link.category?.id) {
+        lastGroup = { category: link.category, navLinks: [] };
         grouped.push(lastGroup);
       }
-      const lastRow = lastGroup.navLinks[lastGroup.navLinks.length - 1];
-      if (lastRow.length < itemsPerRow) {
-        lastRow.push(link);
-      } else {
-        lastGroup.navLinks.push([link]);
-      }
+      lastGroup.navLinks.push(link);
     });
     return grouped;
-  }, [itemsPerRow, navLinks]);
+  }, [navLinks]);
   if (!navLinks.length) {
     return null;
   }
   return (
     <>
-      <EuiPageContent borderRadius="none">
-        <EuiPageHeader>
-          <EuiPageHeaderSection>
-            <EuiTitle size="l">
-              <h1>{pageTitle}</h1>
-            </EuiTitle>
-          </EuiPageHeaderSection>
-        </EuiPageHeader>
-        {getStartedCards.length ? (
-          <>
-            <EuiSpacer size="s" />
-            <EuiTitle>
-              <h3>{getStartedTitle}</h3>
-            </EuiTitle>
-            <EuiFlexGrid columns={4}>
-              {getStartedCards.map((card) => {
-                return (
-                  <EuiFlexItem>
-                    <EuiPanel>
-                      <EuiCard
-                        title={card.title}
-                        description={card.description}
-                        data-test-subj={`getStartedCard_${card.id}`}
-                        textAlign="left"
-                        onClick={() => navigateToApp(card.id)}
-                        titleSize="xs"
-                      />
-                    </EuiPanel>
-                  </EuiFlexItem>
-                );
-              })}
-            </EuiFlexGrid>
-          </>
-        ) : null}
-      </EuiPageContent>
-      <EuiPageContent hasShadow={false} hasBorder={false} color="transparent">
-        {groupedCardForDisplay.map((group) => (
-          <div key={group.category?.id}>
+      <HeaderControl
+        controls={[
+          {
+            description: pageDescription,
+          },
+        ]}
+        setMountPoint={setAppDescriptionControls}
+      />
+      <EuiPageContent hasShadow={false} hasBorder={false} color="transparent" paddingSize="m">
+        {groupedCardForDisplay.map((group, groupIndex) => (
+          <div key={group.category?.id || groupIndex}>
             {group.category && (
               <EuiTitle>
                 <h3>{group.category.label}</h3>
               </EuiTitle>
             )}
-            <EuiSpacer />
-            {group.navLinks.map((row, rowIndex) => {
-              return (
-                <EuiFlexGroup data-test-subj={`landingPageRow_${rowIndex}`} key={rowIndex}>
-                  {Array.from({ length: itemsPerRow }).map((item, itemIndexInRow) => {
-                    const link = row[itemIndexInRow];
-                    const content = link ? (
-                      <EuiCard
-                        data-test-subj={`landingPageFeature_${link.id}`}
-                        textAlign="left"
-                        title={link.title}
-                        description={link.description || link.title}
-                        onClick={() => navigateToApp(link.id)}
-                        titleSize="xs"
-                      />
-                    ) : null;
-                    return (
-                      <EuiFlexItem key={link?.id || itemIndexInRow} grow={1}>
-                        {content}
-                      </EuiFlexItem>
-                    );
-                  })}
-                </EuiFlexGroup>
-              );
-            })}
+            <EuiSpacer size="m" />
+            <EuiFlexGroup wrap>
+              {group.navLinks.map((link, index) => {
+                return (
+                  <EuiFlexItem key={link?.id || index} grow={false}>
+                    <EuiCard
+                      data-test-subj={`landingPageFeature_${link.id}`}
+                      textAlign="left"
+                      title={link.title}
+                      description={link.description || ''}
+                      onClick={() => navigateToApp(link.id)}
+                      titleSize="xs"
+                      style={{ width: 240 }}
+                    />
+                  </EuiFlexItem>
+                );
+              })}
+            </EuiFlexGroup>
             <EuiSpacer />
           </div>
         ))}

@@ -2,21 +2,28 @@
  * Copyright OpenSearch Contributors
  * SPDX-License-Identifier: Apache-2.0
  */
-
-import moment from 'moment';
+import { i18n } from '@osd/i18n';
 import { CoreSetup, CoreStart, Plugin, PluginInitializerContext } from '../../../core/public';
-import { IStorageWrapper, Storage } from '../../opensearch_dashboards_utils/public';
+import { DataStorage } from '../../data/common';
+import {
+  createEditor,
+  DefaultInput,
+  LanguageConfig,
+  Query,
+  SingleLineInput,
+} from '../../data/public';
 import { ConfigSchema } from '../common/config';
-import { setData, setStorage } from './services';
+import { s3TypeConfig } from './datasets';
 import { createQueryAssistExtension } from './query_assist';
+import { pplLanguageReference, sqlLanguageReference } from './query_editor_extensions';
 import { PPLSearchInterceptor, SQLSearchInterceptor } from './search';
+import { setData, setStorage } from './services';
 import {
   QueryEnhancementsPluginSetup,
   QueryEnhancementsPluginSetupDependencies,
   QueryEnhancementsPluginStart,
   QueryEnhancementsPluginStartDependencies,
 } from './types';
-import { UI_SETTINGS } from '../common';
 
 export class QueryEnhancementsPlugin
   implements
@@ -26,99 +33,168 @@ export class QueryEnhancementsPlugin
       QueryEnhancementsPluginSetupDependencies,
       QueryEnhancementsPluginStartDependencies
     > {
-  private readonly storage: IStorageWrapper;
+  private readonly storage: DataStorage;
   private readonly config: ConfigSchema;
 
   constructor(initializerContext: PluginInitializerContext) {
     this.config = initializerContext.config.get<ConfigSchema>();
-    this.storage = new Storage(window.localStorage);
+    this.storage = new DataStorage(window.localStorage, 'discover.queryAssist.');
   }
 
   public setup(
     core: CoreSetup<QueryEnhancementsPluginStartDependencies>,
-    { data }: QueryEnhancementsPluginSetupDependencies
+    { data, usageCollection }: QueryEnhancementsPluginSetupDependencies
   ): QueryEnhancementsPluginSetup {
-    core.uiSettings.getUpdate$().subscribe(({ key, newValue }) => {
-      if (key === UI_SETTINGS.QUERY_ENHANCEMENTS_ENABLED) {
-        if (newValue) {
-          core.uiSettings.set(UI_SETTINGS.STATE_STORE_IN_SESSION_STORAGE, true);
-        }
-      }
-      if (key === UI_SETTINGS.STATE_STORE_IN_SESSION_STORAGE) {
-        if (!newValue) {
-          core.uiSettings.set(UI_SETTINGS.QUERY_ENHANCEMENTS_ENABLED, false);
-        }
-      }
-    });
+    const { queryString } = data.query;
 
-    const pplSearchInterceptor = new PPLSearchInterceptor({
-      toasts: core.notifications.toasts,
-      http: core.http,
-      uiSettings: core.uiSettings,
-      startServices: core.getStartServices(),
-      usageCollector: data.search.usageCollector,
-    });
+    // Define controls once for each language and register language configurations outside of `getUpdates$`
+    const pplControls = [pplLanguageReference('PPL')];
+    const sqlControls = [sqlLanguageReference('SQL')];
 
-    const sqlSearchInterceptor = new SQLSearchInterceptor({
-      toasts: core.notifications.toasts,
-      http: core.http,
-      uiSettings: core.uiSettings,
-      startServices: core.getStartServices(),
-      usageCollector: data.search.usageCollector,
-    });
-
-    data.__enhance({
-      ui: {
-        query: {
-          language: 'PPL',
-          search: pplSearchInterceptor,
-          searchBar: {
-            queryStringInput: { initialValue: 'source=<data_source>' },
-            dateRange: {
-              initialFrom: moment().subtract(2, 'days').toISOString(),
-              initialTo: moment().add(2, 'days').toISOString(),
-            },
-            showFilterBar: false,
-            showDataSetsSelector: true,
-            showDataSourcesSelector: true,
-          },
-          fields: {
-            filterable: false,
-            visualizable: false,
-          },
-          showDocLinks: false,
-          supportedAppNames: ['discover'],
+    // Register PPL language configuration
+    const pplLanguageConfig: LanguageConfig = {
+      id: 'PPL',
+      title: 'PPL',
+      search: new PPLSearchInterceptor({
+        toasts: core.notifications.toasts,
+        http: core.http,
+        uiSettings: core.uiSettings,
+        startServices: core.getStartServices(),
+        usageCollector: data.search.usageCollector,
+      }),
+      getQueryString: (currentQuery: Query) => `source = ${currentQuery.dataset?.title}`,
+      fields: { filterable: false, visualizable: false },
+      docLink: {
+        title: i18n.translate('queryEnhancements.pplLanguage.docLink', {
+          defaultMessage: 'PPL documentation',
+        }),
+        url: 'https://opensearch.org/docs/latest/search-plugins/sql/ppl/syntax/',
+      },
+      showDocLinks: false,
+      editor: createEditor(SingleLineInput, null, pplControls, DefaultInput),
+      editorSupportedAppNames: ['discover'],
+      supportedAppNames: ['discover', 'data-explorer'],
+      sampleQueries: [
+        {
+          title: i18n.translate('queryEnhancements.sampleQuery.titleContainsWind', {
+            defaultMessage: 'The title field contains the word wind.',
+          }),
+          query: `SOURCE = your_table | WHERE LIKE(title, '%wind%')`,
         },
-      },
-    });
-
-    data.__enhance({
-      ui: {
-        query: {
-          language: 'SQL',
-          search: sqlSearchInterceptor,
-          searchBar: {
-            showDatePicker: false,
-            showFilterBar: false,
-            showDataSetsSelector: true,
-            showDataSourcesSelector: true,
-            queryStringInput: { initialValue: 'SELECT * FROM <data_source> LIMIT 10' },
-          },
-          fields: {
-            filterable: false,
-            visualizable: false,
-          },
-          showDocLinks: false,
-          supportedAppNames: ['discover'],
+        {
+          title: i18n.translate('queryEnhancements.sampleQuery.titleContainsWindOrWindy', {
+            defaultMessage: 'The title field contains the word wind or the word windy.',
+          }),
+          query: `SOURCE = your_table | WHERE LIKE(title, '%wind%') OR LIKE(title, '%windy%')`,
         },
+        {
+          title: i18n.translate('queryEnhancements.sampleQuery.titleContainsPhraseWindRises', {
+            defaultMessage: 'The title field contains the phrase wind rises.',
+          }),
+          query: `SOURCE = your_table | WHERE LIKE(title, '%wind rises%')`,
+        },
+        {
+          title: i18n.translate('queryEnhancements.sampleQuery.titleExactMatchWindRises', {
+            defaultMessage: 'The title.keyword field exactly matches The wind rises.',
+          }),
+          query: `SOURCE = your_table | WHERE title = 'The wind rises'`,
+        },
+        {
+          title: i18n.translate('queryEnhancements.sampleQuery.titleFieldsContainWind', {
+            defaultMessage:
+              'Any field that starts with title (for example, title and title.keyword) contains the word wind',
+          }),
+          query: `SOURCE = your_table | WHERE LIKE(title, '%wind%') OR title = 'wind'`,
+        },
+        {
+          title: i18n.translate('queryEnhancements.sampleQuery.descriptionFieldExists', {
+            defaultMessage: 'Documents in which the field description exists.',
+          }),
+          query: `SOURCE = your_table | WHERE ISNOTNULL(description) AND description != '';`,
+        },
+      ],
+    };
+    queryString.getLanguageService().registerLanguage(pplLanguageConfig);
+
+    // Register SQL language configuration
+    const sqlLanguageConfig: LanguageConfig = {
+      id: 'SQL',
+      title: 'OpenSearch SQL',
+      search: new SQLSearchInterceptor({
+        toasts: core.notifications.toasts,
+        http: core.http,
+        uiSettings: core.uiSettings,
+        startServices: core.getStartServices(),
+        usageCollector: data.search.usageCollector,
+      }),
+      getQueryString: (currentQuery: Query) =>
+        `SELECT * FROM ${currentQuery.dataset?.title} LIMIT 10`,
+      fields: { filterable: false, visualizable: false },
+      docLink: {
+        title: i18n.translate('queryEnhancements.sqlLanguage.docLink', {
+          defaultMessage: 'SQL documentation',
+        }),
+        url: 'https://opensearch.org/docs/latest/search-plugins/sql/sql/basic/',
+      },
+      showDocLinks: false,
+      editor: createEditor(SingleLineInput, null, sqlControls, DefaultInput),
+      editorSupportedAppNames: ['discover'],
+      supportedAppNames: ['discover', 'data-explorer'],
+      hideDatePicker: true,
+      sampleQueries: [
+        {
+          title: i18n.translate('queryEnhancements.sampleQuery.titleContainsWind', {
+            defaultMessage: 'The title field contains the word wind.',
+          }),
+          query: `SELECT * FROM your_table WHERE title LIKE '%wind%'`,
+        },
+        {
+          title: i18n.translate('queryEnhancements.sampleQuery.titleContainsWindOrWindy', {
+            defaultMessage: 'The title field contains the word wind or the word windy.',
+          }),
+          query: `SELECT * FROM your_table WHERE title LIKE '%wind%' OR title LIKE '%windy%';`,
+        },
+        {
+          title: i18n.translate('queryEnhancements.sampleQuery.titleContainsPhraseWindRises', {
+            defaultMessage: 'The title field contains the phrase wind rises.',
+          }),
+          query: `SELECT * FROM your_table WHERE title LIKE '%wind rises%'`,
+        },
+        {
+          title: i18n.translate('queryEnhancements.sampleQuery.titleExactMatchWindRises', {
+            defaultMessage: 'The title.keyword field exactly matches The wind rises.',
+          }),
+          query: `SELECT * FROM your_table WHERE title = 'The wind rises'`,
+        },
+        {
+          title: i18n.translate('queryEnhancements.sampleQuery.titleFieldsContainWind', {
+            defaultMessage:
+              'Any field that starts with title (for example, title and title.keyword) contains the word wind',
+          }),
+          query: `SELECT * FROM your_table WHERE title LIKE '%wind%' OR title = 'wind'`,
+        },
+        {
+          title: i18n.translate('queryEnhancements.sampleQuery.descriptionFieldExists', {
+            defaultMessage: 'Documents in which the field description exists.',
+          }),
+          query: `SELECT * FROM your_table WHERE description IS NOT NULL AND description != '';`,
+        },
+      ],
+    };
+    queryString.getLanguageService().registerLanguage(sqlLanguageConfig);
+
+    data.__enhance({
+      editor: {
+        queryEditorExtension: createQueryAssistExtension(
+          core,
+          data,
+          this.config.queryAssist,
+          usageCollection
+        ),
       },
     });
 
-    data.__enhance({
-      ui: {
-        queryEditorExtension: createQueryAssistExtension(core.http, data, this.config.queryAssist),
-      },
-    });
+    queryString.getDatasetService().registerType(s3TypeConfig);
 
     return {};
   }

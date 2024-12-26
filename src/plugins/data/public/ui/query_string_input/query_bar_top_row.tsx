@@ -255,6 +255,7 @@ export default function QueryBarTopRow(props: QueryBarTopRowProps) {
         aria-label={i18n.translate('data.query.queryBar.querySubmitButtonLabel', {
           defaultMessage: 'Submit query',
         })}
+        compressed={true}
       />
     );
 
@@ -264,7 +265,7 @@ export default function QueryBarTopRow(props: QueryBarTopRowProps) {
 
     return (
       <NoDataPopover storage={storage} showNoDataPopover={props.indicateNoData}>
-        <EuiFlexGroup responsive={false} gutterSize="s" alignItems="flexStart">
+        <EuiFlexGroup responsive={false} gutterSize="s" justifyContent="flexStart">
           {renderDatePicker()}
           <EuiFlexItem grow={false}>{button}</EuiFlexItem>
         </EuiFlexGroup>
@@ -305,7 +306,7 @@ export default function QueryBarTopRow(props: QueryBarTopRowProps) {
     });
 
     return (
-      <EuiFlexItem className={wrapperClasses}>
+      <EuiFlexItem className={wrapperClasses} grow={false}>
         <EuiSuperDatePicker
           start={props.dateRangeFrom}
           end={props.dateRangeTo}
@@ -320,6 +321,8 @@ export default function QueryBarTopRow(props: QueryBarTopRowProps) {
           dateFormat={uiSettings!.get('dateFormat')}
           isAutoRefreshOnly={props.showAutoRefreshOnly}
           className="osdQueryBar__datePicker"
+          data-test-subj="osdQueryBarDatePicker"
+          compressed={true}
         />
       </EuiFlexItem>
     );
@@ -331,7 +334,7 @@ export default function QueryBarTopRow(props: QueryBarTopRowProps) {
     if (
       language === 'kuery' &&
       typeof query === 'string' &&
-      (!storage || !storage.get('opensearchDashboards.luceneSyntaxWarningOptOut')) &&
+      (!storage || !storage.get('luceneSyntaxWarningOptOut')) &&
       doesKueryExpressionHaveLuceneSyntaxError(query)
     ) {
       const toast = notifications!.toasts.addWarning({
@@ -377,13 +380,18 @@ export default function QueryBarTopRow(props: QueryBarTopRowProps) {
 
   function onLuceneSyntaxWarningOptOut(toast: Toast) {
     if (!storage) return;
-    storage.set('opensearchDashboards.luceneSyntaxWarningOptOut', true);
+    storage.set('luceneSyntaxWarningOptOut', true);
     notifications!.toasts.remove(toast);
   }
 
   const classes = classNames('osdQueryBar', {
     'osdQueryBar--withDatePicker': props.showDatePicker,
   });
+
+  const shouldUseDatePickerRef =
+    props?.datePickerRef?.current &&
+    (uiSettings.get(UI_SETTINGS.QUERY_ENHANCEMENTS_ENABLED) ||
+      uiSettings.get('home:useNewHomePage'));
 
   return (
     <>
@@ -395,9 +403,9 @@ export default function QueryBarTopRow(props: QueryBarTopRowProps) {
       >
         {renderQueryInput()}
         {renderSharingMetaFields()}
-        <EuiFlexItem grow={false}>
-          {props?.datePickerRef?.current && uiSettings.get(UI_SETTINGS.QUERY_ENHANCEMENTS_ENABLED)
-            ? createPortal(renderUpdateButton(), props.datePickerRef.current)
+        <EuiFlexItem grow={false} className="osdQueryBar--hideEmpty" data-test-subj="osdQueryBar">
+          {shouldUseDatePickerRef
+            ? createPortal(renderUpdateButton(), props.datePickerRef!.current!)
             : renderUpdateButton()}
         </EuiFlexItem>
       </EuiFlexGroup>

@@ -7,12 +7,18 @@ import React from 'react';
 import { fireEvent, render } from '@testing-library/react';
 import { FeatureCards } from './feature_cards';
 import { AppCategory, ChromeNavLink } from 'opensearch-dashboards/public';
+import { navigationPluginMock } from '../../../../navigation/public/mocks';
+import { coreMock } from '../../../../../../src/core/public/mocks';
 
 const mockCategory: AppCategory = {
   id: 'dashboard',
   label: 'Dashboard',
   order: 2,
 };
+
+const mockSetAppDescriptionControls = coreMock.createStart().application.setAppDescriptionControls;
+const mockNavigationUI = navigationPluginMock.createStartContract().ui;
+mockNavigationUI.HeaderControl = () => null;
 
 const navLinks: ChromeNavLink[] = [
   {
@@ -85,32 +91,39 @@ const navLinks: ChromeNavLink[] = [
 describe('<FeatureCards />', () => {
   it('render with empty navLinks', () => {
     const { container } = render(
-      <FeatureCards getStartedCards={[]} pageTitle="" navLinks={[]} navigateToApp={jest.fn()} />
+      <FeatureCards
+        pageDescription=""
+        navLinks={[]}
+        navigateToApp={jest.fn()}
+        setAppDescriptionControls={mockSetAppDescriptionControls}
+        navigationUI={mockNavigationUI}
+      />
     );
     expect(container).toMatchSnapshot();
   });
 
   it('render with complex navLinks', () => {
-    const { container, getAllByTestId } = render(
+    const { container } = render(
       <FeatureCards
-        getStartedCards={[]}
-        pageTitle=""
+        pageDescription=""
         navLinks={navLinks}
         navigateToApp={jest.fn()}
+        setAppDescriptionControls={mockSetAppDescriptionControls}
+        navigationUI={mockNavigationUI}
       />
     );
     expect(container).toMatchSnapshot();
-    expect(getAllByTestId('landingPageRow_1').length).toEqual(2);
   });
 
   it('click item', () => {
     const mockedNavigateToApp = jest.fn();
     const { getByTestId } = render(
       <FeatureCards
-        getStartedCards={[]}
-        pageTitle=""
+        pageDescription=""
         navLinks={navLinks}
         navigateToApp={mockedNavigateToApp}
+        setAppDescriptionControls={mockSetAppDescriptionControls}
+        navigationUI={mockNavigationUI}
       />
     );
     fireEvent.click(getByTestId('landingPageFeature_1'));

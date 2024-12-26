@@ -6,7 +6,6 @@
 import {
   EuiFlyout,
   EuiFlyoutHeader,
-  EuiTitle,
   EuiFlyoutBody,
   EuiFlyoutFooter,
   EuiCallOut,
@@ -216,7 +215,7 @@ export const ImportFlyout = ({ close, refresh }: ImportFlyoutProps) => {
       } else {
         setStatus('error');
         setError(
-          i18n.translate('console.ImportFlyout.importFileErrorMessage', {
+          i18n.translate('console.ImportFlyout.importFileErrorMessage.notJSON', {
             defaultMessage: 'The selected file is not valid. Please select a valid JSON file.',
           })
         );
@@ -276,14 +275,14 @@ export const ImportFlyout = ({ close, refresh }: ImportFlyoutProps) => {
   return (
     <EuiFlyout onClose={close} size="s">
       <EuiFlyoutHeader hasBorder>
-        <EuiTitle size="m">
+        <EuiText size="s">
           <h2>
             <FormattedMessage
               id="console.ImportFlyout.importQueriesTitle"
               defaultMessage="Import queries"
             />
           </h2>
-        </EuiTitle>
+        </EuiText>
       </EuiFlyoutHeader>
 
       <EuiFlyoutBody>

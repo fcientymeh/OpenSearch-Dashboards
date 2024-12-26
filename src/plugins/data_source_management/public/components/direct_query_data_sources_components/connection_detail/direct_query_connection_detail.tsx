@@ -3,57 +3,60 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useState } from 'react';
 import {
+  EuiAccordion,
+  EuiCard,
+  EuiFlexGroup,
+  EuiFlexItem,
+  EuiIcon,
   EuiPage,
   EuiPageBody,
   EuiPageHeader,
   EuiPageHeaderSection,
-  EuiFlexGroup,
-  EuiFlexItem,
-  EuiTitle,
   EuiPanel,
   EuiSpacer,
-  EuiText,
   EuiTabbedContent,
-  EuiIcon,
-  EuiCard,
-  EuiAccordion,
+  EuiTitle,
+  EuiText,
 } from '@elastic/eui';
+import { escapeRegExp } from 'lodash';
 import {
   ApplicationStart,
   HttpStart,
-  IUiSettingsClient,
+  MountPoint,
   NotificationsStart,
   SavedObjectsStart,
 } from 'opensearch-dashboards/public';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
-import { escapeRegExp } from 'lodash';
-import { DATACONNECTIONS_BASE } from '../../../constants';
-import { DirectQueryDatasourceDetails, PrometheusProperties } from '../../../types';
-import { NoAccess } from './utils/no_access_page';
-import { InactiveDataConnectionCallout } from './utils/inactive_data_connection_callout';
-import { AccessControlTab } from './access_control_tab';
-import { getManageDirectQueryDataSourceBreadcrumbs } from '../../breadcrumbs';
 import {
   useLoadAccelerationsToCache,
   useLoadDatabasesToCache,
   useLoadTablesToCache,
 } from '../../../../framework/catalog_cache/cache_loader';
-import { AccelerationTable } from '../acceleration_management/acceleration_table';
-import { getRenderCreateAccelerationFlyout } from '../../../plugin';
-import { AssociatedObjectsTab } from '../associated_object_management/associated_objects_tab';
-import { redirectToExplorerS3 } from '../associated_object_management/utils/associated_objects_tab_utils';
-import {
-  InstallIntegrationFlyout,
-  InstalledIntegrationsTable,
-} from '../integrations/installed_integrations_table';
 import {
   IntegrationInstanceResult,
   IntegrationInstancesSearchResult,
 } from '../../../../framework/types';
 import { INTEGRATIONS_BASE } from '../../../../framework/utils/shared';
-import { isPluginInstalled } from '../../utils';
+import { DATACONNECTIONS_BASE } from '../../../constants';
+import { getRenderCreateAccelerationFlyout } from '../../../plugin';
+import { DirectQueryDatasourceDetails, PrometheusProperties } from '../../../types';
+import { getManageDirectQueryDataSourceBreadcrumbs } from '../../breadcrumbs';
+import { createDataSourceMenu, DataSourceViewConfig } from '../../data_source_menu';
+import { getDataSourcesWithFields, isPluginInstalled } from '../../utils';
+import { AccelerationTable } from '../acceleration_management/acceleration_table';
+import { AssociatedObjectsTab } from '../associated_object_management/associated_objects_tab';
+import { redirectToDiscover } from '../associated_object_management/utils/associated_objects_tab_utils';
+import {
+  InstalledIntegrationsTable,
+  InstallIntegrationFlyout,
+} from '../integrations/installed_integrations_table';
+import { AccessControlTab } from './access_control_tab';
+import { InactiveDataConnectionCallout } from './utils/inactive_data_connection_callout';
+import { NoAccess } from './utils/no_access_page';
+import prometheusSvg from '../../direct_query_data_sources_components/icons/prometheus_logo.svg';
+import s3Svg from '../../direct_query_data_sources_components/icons/s3_logo.svg';
 
 interface DirectQueryDataConnectionDetailProps {
   featureFlagStatus: boolean;
@@ -61,6 +64,9 @@ interface DirectQueryDataConnectionDetailProps {
   notifications: NotificationsStart;
   application: ApplicationStart;
   setBreadcrumbs: (breadcrumbs: any) => void;
+  useNewUX: boolean;
+  savedObjects: SavedObjectsStart;
+  setHeaderActionMenu: (menuMount: MountPoint | undefined) => void;
 }
 
 export const DirectQueryDataConnectionDetail: React.FC<DirectQueryDataConnectionDetailProps> = ({
@@ -69,12 +75,15 @@ export const DirectQueryDataConnectionDetail: React.FC<DirectQueryDataConnection
   notifications,
   application,
   setBreadcrumbs,
+  useNewUX,
+  savedObjects,
+  setHeaderActionMenu,
 }) => {
   const [observabilityDashboardsExists, setObservabilityDashboardsExists] = useState(false);
   const { dataSourceName } = useParams<{ dataSourceName: string }>();
   const { search } = useLocation();
   const queryParams = new URLSearchParams(search);
-  const dataSourceMDSId = queryParams.get('dataSourceMDSId');
+  const dataSourceMDSId = queryParams.get('dataSourceMDSId') ?? '';
   const [datasourceDetails, setDatasourceDetails] = useState<DirectQueryDatasourceDetails>({
     allowedRoles: [],
     name: '',
@@ -86,8 +95,26 @@ export const DirectQueryDataConnectionDetail: React.FC<DirectQueryDataConnection
   const [hasAccess, setHasAccess] = useState(true);
 
   const onclickDiscoverCard = () => {
-    redirectToExplorerS3(dataSourceName, application);
+    redirectToDiscover(application);
   };
+
+  const dataSourceMenuView = useMemo(() => {
+    if (!featureFlagStatus) return null;
+
+    const DataSourceMenuView = createDataSourceMenu<DataSourceViewConfig>();
+
+    const dataSourceViewProps = {
+      setMenuMountPoint: setHeaderActionMenu,
+      componentConfig: {
+        activeOption: [{ id: dataSourceMDSId }],
+        savedObjects: savedObjects.client,
+        notifications,
+        fullWidth: true,
+      },
+    };
+
+    return <DataSourceMenuView {...dataSourceViewProps} componentType={'DataSourceView'} />;
+  }, [featureFlagStatus, dataSourceMDSId, setHeaderActionMenu, savedObjects.client, notifications]);
 
   // Cache loader hook
   const {
@@ -122,24 +149,60 @@ export const DirectQueryDataConnectionDetail: React.FC<DirectQueryDataConnection
   const [refreshIntegrationsFlag, setRefreshIntegrationsFlag] = useState(false);
   const refreshInstances = () => setRefreshIntegrationsFlag((prev) => !prev);
 
+  const [clusterTitle, setDataSourceTitle] = useState<string | undefined>();
+  const fetchDataSources = async () => {
+    try {
+      const dataSources = await getDataSourcesWithFields(savedObjects.client, ['id', 'title']);
+
+      // Find the data source title based on the dataSourceMDSId
+      const foundDataSource = dataSources.find((ds: any) => ds.id === dataSourceMDSId);
+      if (foundDataSource) {
+        setDataSourceTitle(foundDataSource.attributes.title);
+      }
+    } catch (error) {
+      notifications.toasts.addDanger({
+        title: 'Failed to fetch data sources',
+        text: error.message,
+      });
+    }
+  };
+
+  useEffect(() => {
+    if (featureFlagStatus) {
+      fetchDataSources();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [featureFlagStatus, savedObjects, notifications, dataSourceMDSId]);
+
   useEffect(() => {
     const searchDataSourcePattern = new RegExp(
       `flint_${escapeRegExp(datasourceDetails.name)}_default_.*`
     );
+
     const findIntegrations = async () => {
       const result: { data: IntegrationInstancesSearchResult } = await http!.get(
         INTEGRATIONS_BASE + `/store`
       );
+
       if (result.data?.hits) {
-        setDataSourceIntegrations(
-          result.data.hits.filter((res) => res.dataSource.match(searchDataSourcePattern))
+        let filteredIntegrations = result.data.hits.filter((res) =>
+          res.dataSource.match(searchDataSourcePattern)
         );
+
+        if (featureFlagStatus && dataSourceMDSId !== null) {
+          filteredIntegrations = filteredIntegrations.filter((res) => {
+            return res.references && res.references.some((ref) => ref.id === dataSourceMDSId);
+          });
+        }
+
+        setDataSourceIntegrations(filteredIntegrations);
       } else {
         setDataSourceIntegrations([]);
       }
     };
+
     findIntegrations();
-  }, [http, datasourceDetails.name, refreshIntegrationsFlag]);
+  }, [http, datasourceDetails.name, refreshIntegrationsFlag, featureFlagStatus, dataSourceMDSId]);
 
   const [showIntegrationsFlyout, setShowIntegrationsFlyout] = useState(false);
   const onclickIntegrationsCard = () => {
@@ -151,6 +214,8 @@ export const DirectQueryDataConnectionDetail: React.FC<DirectQueryDataConnection
       datasourceType={datasourceDetails.connector}
       datasourceName={datasourceDetails.name}
       http={http}
+      selectedDataSourceId={dataSourceMDSId || ''}
+      selectedClusterName={clusterTitle}
     />
   ) : null;
 
@@ -194,7 +259,7 @@ export const DirectQueryDataConnectionDetail: React.FC<DirectQueryDataConnection
   const DefaultDatasourceCards = () => {
     return (
       <EuiFlexGroup>
-        {!featureFlagStatus && observabilityDashboardsExists && (
+        {observabilityDashboardsExists && (
           <EuiFlexItem>
             <EuiCard
               icon={<EuiIcon size="xxl" type="integrationGeneral" />}
@@ -242,7 +307,7 @@ export const DirectQueryDataConnectionDetail: React.FC<DirectQueryDataConnection
               selectable={{
                 onClick: onclickDiscoverCard,
                 isDisabled: false,
-                children: 'Query in Observability Logs',
+                children: 'Query in Discover',
               }}
             />
           </EuiFlexItem>
@@ -277,12 +342,31 @@ export const DirectQueryDataConnectionDetail: React.FC<DirectQueryDataConnection
   const S3DatasourceOverview = () => (
     <EuiPanel>
       <EuiFlexGroup>
+        <EuiFlexItem grow={false}>
+          <EuiFlexGroup direction="column" alignItems="center">
+            <EuiFlexItem grow={false}>
+              <EuiText className="overview-title">Data Source Type</EuiText>
+            </EuiFlexItem>
+            <EuiFlexItem grow={false}>
+              <EuiFlexGroup alignItems="center" gutterSize="s">
+                <EuiFlexItem grow={false}>
+                  <EuiIcon type={s3Svg} size="xl" />
+                </EuiFlexItem>
+                <EuiFlexItem grow={false}>
+                  <EuiTitle size="s">
+                    <h3>Amazon S3</h3>
+                  </EuiTitle>
+                </EuiFlexItem>
+              </EuiFlexGroup>
+            </EuiFlexItem>
+          </EuiFlexGroup>
+        </EuiFlexItem>
         <EuiFlexItem>
           <EuiFlexGroup direction="column">
             <EuiFlexItem grow={false}>
               <EuiText className="overview-title">Description</EuiText>
               <EuiText size="s" className="overview-content">
-                {datasourceDetails.description || '-'}
+                {datasourceDetails.description || '\u2014'}
               </EuiText>
             </EuiFlexItem>
           </EuiFlexGroup>
@@ -307,18 +391,37 @@ export const DirectQueryDataConnectionDetail: React.FC<DirectQueryDataConnection
   const PrometheusDatasourceOverview = () => (
     <EuiPanel>
       <EuiFlexGroup>
+        <EuiFlexItem grow={false}>
+          <EuiFlexGroup direction="column" alignItems="center">
+            <EuiFlexItem grow={false}>
+              <EuiText className="overview-title">Data Source Type</EuiText>
+            </EuiFlexItem>
+            <EuiFlexItem grow={false}>
+              <EuiFlexGroup alignItems="center" gutterSize="s">
+                <EuiFlexItem grow={false}>
+                  <EuiIcon type={prometheusSvg} size="xl" />
+                </EuiFlexItem>
+                <EuiFlexItem grow={false}>
+                  <EuiTitle size="s">
+                    <h3>Prometheus</h3>
+                  </EuiTitle>
+                </EuiFlexItem>
+              </EuiFlexGroup>
+            </EuiFlexItem>
+          </EuiFlexGroup>
+        </EuiFlexItem>
         <EuiFlexItem>
           <EuiFlexGroup direction="column">
             <EuiFlexItem grow={false}>
               <EuiText className="overview-title">Connection title</EuiText>
               <EuiText size="s" className="overview-content">
-                {datasourceDetails.name || '-'}
+                {datasourceDetails.name || '\u2014'}
               </EuiText>
             </EuiFlexItem>
             <EuiFlexItem grow={false}>
               <EuiText className="overview-title">Data source description</EuiText>
               <EuiText size="s" className="overview-content">
-                {datasourceDetails.description || '-'}
+                {datasourceDetails.description || '\u2014'}
               </EuiText>
             </EuiFlexItem>
           </EuiFlexGroup>
@@ -407,37 +510,41 @@ export const DirectQueryDataConnectionDetail: React.FC<DirectQueryDataConnection
               />
             ),
           },
-          !featureFlagStatus &&
-            observabilityDashboardsExists && {
-              id: 'installed_integrations',
-              name: 'Installed Integrations',
-              disabled: false,
-              content: (
-                <InstalledIntegrationsTable
-                  integrations={dataSourceIntegrations}
-                  datasourceType={datasourceDetails.connector}
-                  datasourceName={datasourceDetails.name}
-                  refreshInstances={refreshInstances}
-                  http={http}
-                />
-              ),
-            },
+          observabilityDashboardsExists && {
+            id: 'installed_integrations',
+            name: 'Installed Integrations',
+            disabled: false,
+            content: (
+              <InstalledIntegrationsTable
+                integrations={dataSourceIntegrations}
+                datasourceType={datasourceDetails.connector}
+                datasourceName={datasourceDetails.name}
+                refreshInstances={refreshInstances}
+                http={http}
+                selectedDataSourceId={featureFlagStatus ? dataSourceMDSId ?? undefined : undefined}
+                selectedClusterName={clusterTitle}
+              />
+            ),
+          },
         ].filter(Boolean)
       : [];
 
   const tabs = [...conditionalTabs, ...genericTabs];
 
   return (
-    <EuiPage>
+    <EuiPage paddingSize="none">
       <EuiPageBody>
         <EuiPageHeader style={{ justifyContent: 'spaceBetween' }}>
           <EuiPageHeaderSection style={{ width: '100%', justifyContent: 'space-between' }}>
-            <EuiFlexGroup>
-              <EuiFlexItem grow={false}>
-                <EuiTitle data-test-subj="datasourceTitle" size="l">
-                  <h1>{datasourceDetails.name}</h1>
-                </EuiTitle>
+            <EuiFlexGroup alignItems="center">
+              <EuiFlexItem>
+                {!useNewUX && (
+                  <EuiText data-test-subj="datasourceTitle" size="s">
+                    <h1>{datasourceDetails.name}</h1>
+                  </EuiText>
+                )}
               </EuiFlexItem>
+              <EuiFlexItem grow={false}>{dataSourceMenuView}</EuiFlexItem>
             </EuiFlexGroup>
           </EuiPageHeaderSection>
         </EuiPageHeader>
@@ -459,7 +566,7 @@ export const DirectQueryDataConnectionDetail: React.FC<DirectQueryDataConnection
             >
               <QueryOrAccelerateData />
             </EuiAccordion>
-            <EuiTabbedContent tabs={tabs} />
+            <EuiTabbedContent tabs={tabs} size="s" />
           </>
         )}
 
