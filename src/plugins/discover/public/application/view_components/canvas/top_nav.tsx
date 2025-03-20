@@ -10,9 +10,10 @@ import { EuiButtonIcon, EuiFlexGroup, EuiFlexItem, EuiToolTip } from '@elastic/e
 import { i18n } from '@osd/i18n';
 import { AppMountParameters } from '../../../../../../core/public';
 import {
-  connectStorageToQueryState,
+  useConnectStorageToQueryState,
   opensearchFilters,
   QueryStatus,
+  useSyncQueryStateWithUrl,
 } from '../../../../../data/public';
 import { useOpenSearchDashboards } from '../../../../../opensearch_dashboards_react/public';
 import { PLUGIN_ID } from '../../../../common';
@@ -59,21 +60,30 @@ export const TopNav = ({ opts, showSaveQuery, isEnhancementsEnabled }: TopNavPro
     uiSettings,
   } = services;
 
+  const { startSyncingQueryStateWithUrl } = useSyncQueryStateWithUrl(
+    data.query,
+    osdUrlStateStorage
+  );
   const showActionsInGroup = uiSettings.get('home:useNewHomePage');
 
   const topNavLinks = savedSearch
-    ? getTopNavLinks(services, inspectorAdapters, savedSearch, isEnhancementsEnabled)
+    ? getTopNavLinks(
+        services,
+        inspectorAdapters,
+        savedSearch,
+        startSyncingQueryStateWithUrl,
+        isEnhancementsEnabled
+      )
     : [];
 
-  connectStorageToQueryState(
-    services.data.query,
-    osdUrlStateStorage,
-    {
+  const syncConfig = useMemo(() => {
+    return {
       filters: opensearchFilters.FilterStateStore.APP_STATE,
       query: true,
-    },
-    uiSettings
-  );
+    };
+  }, []);
+
+  useConnectStorageToQueryState(services.data.query, osdUrlStateStorage, syncConfig);
 
   useEffect(() => {
     const subscription = data$.subscribe((queryData) => {

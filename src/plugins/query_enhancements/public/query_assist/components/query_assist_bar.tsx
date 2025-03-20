@@ -15,7 +15,7 @@ import { useOpenSearchDashboards } from '../../../../opensearch_dashboards_react
 import { QueryAssistParameters } from '../../../common/query_assist';
 import { getStorage } from '../../services';
 import { useGenerateQuery } from '../hooks';
-import { getPersistedLog, AgentError, ProhibitedQueryError } from '../utils';
+import { getPersistedLog, AgentError, ProhibitedQueryError, appendQueryPrompt } from '../utils';
 import { QueryAssistCallOut, QueryAssistCallOutType } from './call_outs';
 import { QueryAssistInput } from './query_assist_input';
 import { QueryAssistSubmitButton } from './submit_button';
@@ -43,7 +43,7 @@ export const QueryAssistBar: React.FC<QueryAssistInputProps> = (props) => {
   );
   const selectedIndex = selectedDataset?.title;
   const previousQuestionRef = useRef<string>();
-  const { updateQuestion, isQueryAssistCollapsed } = useQueryAssist();
+  const { updateQueryState } = useQueryAssist();
 
   useEffect(() => {
     const subscription = queryString.getUpdates$().subscribe((query) => {
@@ -66,9 +66,9 @@ export const QueryAssistBar: React.FC<QueryAssistInputProps> = (props) => {
     setAgentError(undefined);
     previousQuestionRef.current = inputRef.current.value;
     persistedLog.add(inputRef.current.value);
-    updateQuestion(inputRef.current.value);
     const params: QueryAssistParameters = {
-      question: inputRef.current.value,
+      // Only append query prompt in request payload
+      question: appendQueryPrompt(inputRef.current.value),
       index: selectedIndex,
       language: props.dependencies.language,
       dataSourceId: selectedDataset?.dataSource?.id,
@@ -82,18 +82,26 @@ export const QueryAssistBar: React.FC<QueryAssistInputProps> = (props) => {
       } else {
         services.notifications.toasts.addError(error, { title: 'Failed to generate results' });
       }
+      updateQueryState({
+        question: previousQuestionRef.current,
+        generatedQuery: '', // query generate failed, set it to empty
+      });
     } else if (response) {
       services.data.query.queryString.setQuery({
         query: response.query,
         language: params.language,
         dataset: selectedDataset,
       });
+      updateQueryState({
+        question: previousQuestionRef.current,
+        generatedQuery: response.query,
+      });
       if (response.timeRange) services.data.query.timefilter.timefilter.setTime(response.timeRange);
       setCallOutType('query_generated');
     }
   };
 
-  if (props.dependencies.isCollapsed || isQueryAssistCollapsed) return null;
+  if (props.dependencies.isCollapsed) return null;
 
   return (
     <EuiForm component="form" onSubmit={onSubmit} className="queryAssist queryAssist__form">

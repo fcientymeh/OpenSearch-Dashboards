@@ -6,25 +6,6 @@
 declare namespace Cypress {
   interface Chainable<Subject> {
     /**
-     * Call a function when an element with a test id cannot be found
-     * @example
-     * cy.whenTestIdNotFound(['query', 'puery'], () => {...})
-     */
-    whenTestIdNotFound<S = any>(
-      testIds: string | string[],
-      callbackFn: void,
-      options?: Partial<Loggable & Timeoutable & Withinable & Shadow>
-    ): Chainable<S>;
-    /**
-     * Get elements by their test ids
-     * @example
-     * cy.getElementsByTestIds(['query', 'puery'])
-     */
-    getElementsByTestIds<S = any>(
-      testIds: string | string[],
-      options?: Partial<Loggable & Timeoutable & Withinable & Shadow>
-    ): Chainable<S>;
-    /**
      * Get an element by its test id
      * @example
      * cy.getElementByTestId('query')
@@ -35,126 +16,203 @@ declare namespace Cypress {
     ): Chainable<S>;
 
     /**
-     * Create an index
+     * Get an element which contains testId
      * @example
-     * cy.createIndex('indexID')
-     * cy.createIndex('indexID', 'policy')
+     * cy.getElementByTestIdLike('query')
      */
-    createIndex<S = any>(index: string, policyID?: string, settings?: any): Chainable<S>;
-
-    /**
-     * Delete an index
-     * @example
-     * cy.deleteIndex('indexID')
-     */
-    deleteIndex<S = any>(index: string): Chainable<S>;
-
-    /**
-     * Bulk upload NDJSON fixture data
-     * @example
-     * cy.bulkUploadDocs('plugins/test/test_data.txt')
-     */
-    bulkUploadDocs<S = any>(
-      fixturePath: string,
-      index: string
-      // options?: Partial<Loggable & Timeoutable & Withinable & Shadow>
+    getElementByTestIdLike<S = any>(
+      testId: string,
+      options?: Partial<Loggable & Timeoutable & Withinable & Shadow>
     ): Chainable<S>;
 
     /**
-     * Import saved objects
+     * Get elements by their test ids
      * @example
-     * cy.importSavedObject('plugins/test/exported_data.ndjson')
+     * cy.getElementsByTestIds(['query', 'puery'])
      */
-    importSavedObjects<S = any>(fixturePath: string, overwrite?: boolean): Chainable<S>;
-
-    /**
-     * Delete a saved object
-     * @example
-     * cy.deleteSavedObject('index-pattern', 'id')
-     */
-    deleteSavedObject<S = any>(type: string, id: string): Chainable<S>;
-
-    /**
-     * Test if data source exists
-     * @example
-     * cy.ifDataSourceExists('data-source')
-     */
-    ifDataSourceExists<S = any>(search: string): Chainable<S>;
-
-    /**
-     * Delete all saved objects of a particular type
-     * Optionally, narrow down the results using search
-     * @example
-     * cy.deleteSavedObjectByType('index-pattern')
-     * cy.deleteSavedObjectByType('index-pattern', 'search string')
-     */
-    deleteSavedObjectByType<S = any>(type: string, search?: string): Chainable<S>;
-
-    /**
-     * Adds an index pattern
-     * @example
-     * cy.createIndexPattern('patterId', { title: 'patt*', timeFieldName: 'timestamp' })
-     */
-    createIndexPattern<S = any>(
-      id: string,
-      attributes: {
-        title: string;
-        timeFieldName?: string;
-        [key: string]: any;
-      },
-      header: string
+    getElementsByTestIds<S = any>(
+      testIds: string | string[],
+      options?: Partial<Loggable & Timeoutable & Withinable & Shadow>
     ): Chainable<S>;
 
     /**
-     * Adds a dashboard
+     * Find element from previous chained element with a data-test-subj id containing the testId.
+     * @param {string} subject DOM object to find within.
+     * @param {string} testId data-test-subj value.
+     * @param {object} options get options. Default: {}
      * @example
-     * cy.createDashboard({ title: 'My dashboard'})
+     * // returns all DOM elements that has a data-test-subj including the string 'table'
+     * cy.findElementsByTestIdLike('table')
      */
-    createDashboard<S = any>(
-      attributes: {
-        title: string;
-        [key: string]: any;
-      },
-      headers?: {
-        [key: string]: any;
-      }
+    findElementByTestIdLike<S = any>(
+      partialTestId: string,
+      options?: Partial<Loggable & Timeoutable & Withinable & Shadow>
     ): Chainable<S>;
 
     /**
-     * Changes the Default tenant for the domain.
-     * @example
-     * cy.changeDefaultTenant({multitenancy_enabled: true, private_tenant_enabled: true, default_tenant: tenantName, });
+     * Find element from previous chained element by data-test-subj id.
+     * @param {string} subject DOM object to find within.
+     * @param {string} testId data-test-subj value.
+     * @param {object} options get options. Default: {}
      */
-    changeDefaultTenant<S = any>(
-      attributes: {
-        multitenancy_enabled: boolean;
-        private_tenant_enabled: boolean;
-        default_tenant: string;
-      }
-      // header: string,
-      // default_tenant: string
+    findElementByTestId<S = any>(
+      testId: string,
+      options?: Partial<Loggable & Timeoutable & Withinable & Shadow>
     ): Chainable<S>;
 
     /**
-     * Delete an index pattern
+     * Call a function when an element with a test id cannot be found
      * @example
-     * cy.createIndexPattern('patterId')
+     * cy.whenTestIdNotFound(['query', 'puery'], () => {...})
      */
-    deleteIndexPattern<S = any>(id: string): Chainable<S>;
+    whenTestIdNotFound<S = any>(
+      testIds: string | string[],
+      callbackFn: void,
+      options?: Partial<Loggable & Timeoutable & Withinable & Shadow>
+    ): Chainable<S>;
 
     /**
-     * Set advanced setting values
-     * tip: setting the value to null set's it to its default value
+     * Deletes a workspace
      * @example
-     * cy.setAdvancedSetting({ 'visualize:enableLabs' : true })
+     * cy.deleteWorkspace('workspace-name');
      */
-    setAdvancedSetting<S = any>(changes: { [key: string]: any }): Chainable<S>;
+    deleteWorkspace<S = any>(workspaceName: string): Chainable<S>;
 
     /**
-     * Performs drag and drop action
-     * @example
-     * cy.get('sourceSelector').drag('targetSelector')
+     * Opens workspace dashboard
      */
-    drag<S = any>(targetSelector: string): Chainable<S>;
+    openWorkspaceDashboard<S = any>(workspaceName: string): Chainable<S>;
+
+    /**
+     * Sets advanced settings
+     */
+    setAdvancedSetting(changes: Record<string, any>): Chainable<any>;
+
+    // osd namespace
+    osd: {
+      /**
+       * Creates workspace and attaches it to the provided data source
+       * It also saves the created workspace id as the alias @WORKSPACE_ID
+       */
+      createInitialWorkspaceWithDataSource<S = any>(
+        dataSourceTitle: string,
+        workspaceName: string
+      ): Chainable<S>;
+
+      /**
+       * Delete an index
+       * @example
+       * cy.deleteIndex('indexID')
+       */
+      deleteIndex<S = any>(index: string): Chainable<S>;
+
+      /**
+       * Sets up test data
+       */
+      setupTestData<S = any>(
+        endpoint: string,
+        mappingFiles: string[],
+        dataFiles: string[]
+      ): Chainable<S>;
+
+      addDataSource(opts: {
+        name: string;
+        url: string;
+        auth_type?: string;
+        credentials?: { username: string; password: string };
+      }): Chainable<any>;
+
+      deleteDataSourceByName(dataSourceName: string): Chainable<any>;
+
+      deleteAllDataSources(): Chainable<any>;
+
+      /**
+       * Navigates to the workspace HomePage of a given workspace
+       * @param workspaceName - The name of the workspace to navigate to
+       */
+      navigateToWorkSpaceHomePage(workspaceName: string): Chainable<any>;
+
+      /**
+       * Navigates to workspace specific pages
+       * @param opts - Navigation options
+       */
+      navigateToWorkSpaceSpecificPage(opts: {
+        workspaceName: string;
+        page: string;
+        isEnhancement?: boolean;
+      }): Chainable<any>;
+
+      /**
+       * Wait for Dashboards page to load
+       * @example
+       * cy.osd.waitForLoader()
+       */
+      waitForLoader(isEnhancement?: boolean): Chainable<any>;
+
+      /**
+       * Grabs the dataSourceId in non-OSD environments and saves it in the alias @DATASOURCE_ID
+       */
+      grabDataSourceId(workspaceName: string, dataSourceName: string): Chainable<any>;
+
+      /**
+       * Deletes all workspaces that are older than a specified amount. This is to prevent ws buildup
+       */
+      deleteAllOldWorkspaces(): Chainable<any>;
+
+      /**
+       * Loads test data, adds data source, creates workspace, and optionally creates index patterns
+       */
+      setupWorkspaceAndDataSourceWithIndices(
+        workspaceName: string,
+        indices:
+          | 'data_logs_large_time_1'
+          | 'data_logs_large_time_2'
+          | 'data_logs_small_no_time_1'
+          | 'data_logs_small_no_time_2'
+          | 'data_logs_small_time_1'
+          | 'data_logs_small_time_2'
+      ): Chainable<any>;
+
+      /**
+       * Cleans up workspace, data source, and indices
+       */
+      cleanupWorkspaceAndDataSourceAndIndices(
+        workspaceName: string,
+        indices:
+          | 'data_logs_large_time_1'
+          | 'data_logs_large_time_2'
+          | 'data_logs_small_no_time_1'
+          | 'data_logs_small_no_time_2'
+          | 'data_logs_small_time_1'
+          | 'data_logs_small_time_2'
+      ): Chainable<any>;
+
+      /**
+       * Reloads until top nav exists in DOM or max attempt has been reached
+       * There is a bug where the top nav does not appear for cypress
+       * This issue has not been reproducible in manual testing,
+       * but if we do encounter this issue manually, this code should be removed
+       * and the bug fixed
+       */
+      ensureTopNavExists(): Chainable<any>;
+
+      /**
+       * Set the top nav date range.
+       * Date format: MMM D, YYYY @ HH:mm:ss.SSS
+       * @example
+       * cy.setTopNavDate('Oct 5, 2022 @ 00:57:06.429', 'Oct 6, 2022 @ 00:57:06.429')
+       */
+      setTopNavDate(start: string, end: string, submit?: boolean): Chainable<any>;
+
+      /**
+       * Sets the top nav date to relative time
+       */
+      setRelativeTopNavDate(time: number, timeUnit: string): Chainable<any>;
+
+      /**
+       * Verifies the number of rows count
+       */
+      verifyResultsCount(count: number): Chainable<any>;
+    };
   }
 }

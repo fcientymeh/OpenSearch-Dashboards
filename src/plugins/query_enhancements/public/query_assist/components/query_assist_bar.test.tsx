@@ -17,7 +17,6 @@ import { setData, setStorage } from '../../services';
 import { useGenerateQuery } from '../hooks';
 import { AgentError, ProhibitedQueryError } from '../utils';
 import { QueryAssistInput } from './query_assist_input';
-import { useQueryAssist } from '../hooks';
 
 jest.mock('../../../../opensearch_dashboards_react/public', () => ({
   useOpenSearchDashboards: jest.fn(),
@@ -26,9 +25,7 @@ jest.mock('../../../../opensearch_dashboards_react/public', () => ({
 
 jest.mock('../hooks', () => ({
   useGenerateQuery: jest.fn().mockReturnValue({ generateQuery: jest.fn(), loading: false }),
-  useQueryAssist: jest
-    .fn()
-    .mockReturnValue({ updateQuestion: jest.fn(), isQueryAssistCollapsed: false }),
+  useQueryAssist: jest.fn().mockReturnValue({ updateQueryState: jest.fn() }),
 }));
 
 jest.mock('./query_assist_input', () => ({
@@ -53,6 +50,10 @@ const dependencies: QueryEditorExtensionDependencies = {
   onSelectLanguage: jest.fn(),
   isCollapsed: false,
   setIsCollapsed: jest.fn(),
+  query: {
+    query: '',
+    language: '',
+  },
 };
 
 type Props = ComponentProps<typeof QueryAssistBar>;
@@ -86,14 +87,6 @@ describe('QueryAssistBar', () => {
   it('renders null if collapsed', () => {
     const { component } = renderQueryAssistBar({
       dependencies: { ...dependencies, isCollapsed: true },
-    });
-    expect(component.container).toBeEmptyDOMElement();
-  });
-
-  it('renders null if question assist is collapsed', () => {
-    useQueryAssist.mockReturnValueOnce({ updateQuestion: jest.fn(), isQueryAssistCollapsed: true });
-    const { component } = renderQueryAssistBar({
-      dependencies: { ...dependencies, isCollapsed: false },
     });
     expect(component.container).toBeEmptyDOMElement();
   });

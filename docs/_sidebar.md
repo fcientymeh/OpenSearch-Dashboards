@@ -12,6 +12,8 @@
     - [User_stories](multi-datasource/user_stories.md)
   - [Openapi](openapi/README.md)
   - Plugins
+    - discover
+      - [Understand_and_extend_discover](plugins/discover/understand_and_extend_discover.md)
     - [Data_persistence](plugins/data_persistence.md)
   - Saved_objects
     - [Saved_object_repository_factory_design](saved_objects/saved_object_repository_factory_design.md)
@@ -171,6 +173,7 @@
     - [Opensearch dashboards.release notes 2.17.0](../release-notes/opensearch-dashboards.release-notes-2.17.0.md)
     - [Opensearch dashboards.release notes 2.17.1](../release-notes/opensearch-dashboards.release-notes-2.17.1.md)
     - [Opensearch dashboards.release notes 2.18.0](../release-notes/opensearch-dashboards.release-notes-2.18.0.md)
+    - [Opensearch dashboards.release notes 2.19.0](../release-notes/opensearch-dashboards.release-notes-2.19.0.md)
     - [Opensearch dashboards.release notes 2.2.0](../release-notes/opensearch-dashboards.release-notes-2.2.0.md)
     - [Opensearch dashboards.release notes 2.2.1](../release-notes/opensearch-dashboards.release-notes-2.2.1.md)
     - [Opensearch dashboards.release notes 2.3.0](../release-notes/opensearch-dashboards.release-notes-2.3.0.md)
@@ -181,6 +184,7 @@
     - [Opensearch dashboards.release notes 2.7.0](../release-notes/opensearch-dashboards.release-notes-2.7.0.md)
     - [Opensearch dashboards.release notes 2.8.0](../release-notes/opensearch-dashboards.release-notes-2.8.0.md)
     - [Opensearch dashboards.release notes 2.9.0](../release-notes/opensearch-dashboards.release-notes-2.9.0.md)
+    - [Opensearch dashboards.release notes 3.0.0 alpha1](../release-notes/opensearch-dashboards.release-notes-3.0.0-alpha1.md)
   - scripts
     - [README](../scripts/README.md)
   - [DOCS_README](DOCS_README.md)
@@ -195,4 +199,5 @@
   - [RELEASING](../RELEASING.md)
   - [SECURITY](../SECURITY.md)
   - [TESTING](../TESTING.md)
+  - [TRIAGING](../TRIAGING.md)
   - [TYPESCRIPT](../TYPESCRIPT.md)

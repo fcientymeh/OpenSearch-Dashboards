@@ -61,7 +61,11 @@ import { WorkspaceObject, WorkspacesStart } from '../../../../public/workspace';
 import { InternalApplicationStart } from '../../../application/types';
 import { HttpStart } from '../../../http';
 import { useObservableValue } from '../../../utils';
-import { getOsdSidecarPaddingStyle, ISidecarConfig } from '../../../overlays';
+import {
+  getOsdSidecarPaddingStyle,
+  ISidecarConfig,
+  getSidecarLeftNavStyle,
+} from '../../../overlays';
 import {
   ChromeBranding,
   ChromeBreadcrumbEnricher,
@@ -108,6 +112,7 @@ export interface HeaderProps {
   navControlsExpandedCenter$: Observable<readonly ChromeNavControl[]>;
   navControlsExpandedRight$: Observable<readonly ChromeNavControl[]>;
   navControlsLeftBottom$: Observable<readonly ChromeNavControl[]>;
+  navControlsPrimaryHeaderRight$: Observable<readonly ChromeNavControl[]>;
   basePath: HttpStart['basePath'];
   isLocked$: Observable<boolean>;
   loadingCount$: ReturnType<HttpStart['getLoadingCount$']>;
@@ -177,6 +182,10 @@ export function Header({
 
   const sidecarPaddingStyle = useMemo(() => {
     return getOsdSidecarPaddingStyle(sidecarConfig);
+  }, [sidecarConfig]);
+
+  const sidecarLeftNavStyle = useMemo(() => {
+    return getSidecarLeftNavStyle(sidecarConfig);
   }, [sidecarConfig]);
 
   const isNavOpen = useUpdatedHeader ? isLocked : isNavOpenState;
@@ -320,6 +329,8 @@ export function Header({
           ? null
           : renderNavToggleWithExtraProps({
               className: 'navToggleInLargeScreen eui-hideFor--xs eui-hideFor--s eui-hideFor--m',
+              // Nav toggle button has a fixed position and its left size is 0 be default, it should have a left size if sidecar is docked to left.
+              style: sidecarLeftNavStyle,
             })}
         {renderNavToggleWithExtraProps({
           flush: 'both',
@@ -501,7 +512,13 @@ export function Header({
         renderBreadcrumbs={renderBreadcrumbs(true, true)}
         buttonSize={useApplicationHeader ? 's' : 'xs'}
         loadingCount$={observables.loadingCount$}
+        workspaceEnabled={application.capabilities.workspaces.enabled}
       />
+    </EuiHeaderSectionItem>
+  );
+  const renderPrimaryHeaderRight = () => (
+    <EuiHeaderSectionItem border="none">
+      <HeaderNavControls navControls$={observables.navControlsPrimaryHeaderRight$} />
     </EuiHeaderSectionItem>
   );
 
@@ -547,13 +564,15 @@ export function Header({
   );
 
   const renderPageHeader = () => (
-    <div>
-      <EuiHeader className="primaryHeader newTopNavHeader" style={sidecarPaddingStyle}>
+    <div style={sidecarPaddingStyle}>
+      <EuiHeader className="primaryHeader newTopNavHeader">
         {renderNavToggle()}
 
         <EuiHeaderSection grow={false}>{renderRecentItems()}</EuiHeaderSection>
 
         {renderBreadcrumbs(false, false)}
+
+        {renderPrimaryHeaderRight()}
       </EuiHeader>
 
       {/* Secondary header */}
@@ -623,7 +642,10 @@ export function Header({
           {renderRecentItems()}
           {actionMenu}
         </EuiHeaderSection>
-        <EuiHeaderSection side="right">{rightControls}</EuiHeaderSection>
+        <EuiHeaderSection side="right">
+          {rightControls}
+          {renderPrimaryHeaderRight()}
+        </EuiHeaderSection>
       </EuiHeader>
       <div id="applicationHeaderFilterBar" />
     </div>
@@ -689,6 +711,7 @@ export function Header({
             }}
             customNavLink$={observables.customNavLink$}
             logos={logos}
+            workspaceEnabled={application.capabilities.workspaces.enabled}
           />
         )}
       </header>

@@ -3,19 +3,111 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-Cypress.Commands.add('setSingleLineQueryEditor', (value, submit = true) => {
-  const opts = { log: false };
+const MAX_RETRIES = 3;
+const RETRY_DELAY = 1000;
+
+const forceFocusEditor = () => {
+  return cy
+    .get('.globalQueryEditor .react-monaco-editor-container')
+    .click({ force: true })
+    .wait(200) // Give editor time to register focus
+    .get('.inputarea')
+    .focus()
+    .wait(200); // Wait for focus to take effect
+};
+
+const clearMonacoEditor = () => {
+  return cy
+    .get('.globalQueryEditor .react-monaco-editor-container')
+    .should('exist')
+    .should('be.visible')
+    .then(() => {
+      // First ensure we have focus
+      return forceFocusEditor().then(() => {
+        // Try different key combinations for selection
+        return cy
+          .get('.inputarea')
+          .type('{ctrl}a', { force: true })
+          .wait(100)
+          .type('{backspace}', { force: true })
+          .wait(100)
+          .type('{meta}a', { force: true })
+          .wait(100)
+          .type('{backspace}', { force: true });
+      });
+    });
+};
+
+const isEditorEmpty = () => {
+  return cy
+    .get('.globalQueryEditor .react-monaco-editor-container')
+    .find('.view-line')
+    .invoke('text')
+    .then((text) => text.trim() === '');
+};
+
+Cypress.Commands.add('clearQueryEditor', () => {
+  const clearWithRetry = (attempt = 1) => {
+    cy.log(`Attempt ${attempt} to clear editor`);
+
+    return forceFocusEditor()
+      .then(() => clearMonacoEditor())
+      .then(() => {
+        return isEditorEmpty().then((isEmpty) => {
+          cy.log(`is editor empty: ${isEmpty}`);
+
+          if (isEmpty) {
+            return; // Editor is cleared, we're done
+          }
+
+          if (attempt < MAX_RETRIES) {
+            cy.log(`Editor not cleared, retrying... (attempt ${attempt})`);
+            cy.wait(RETRY_DELAY); // Wait before next attempt
+            return clearWithRetry(attempt + 1);
+          } else {
+            cy.log('Failed to clear editor after all attempts');
+            // Instead of throwing error, try one last time with extra waiting
+            return cy.wait(2000).then(forceFocusEditor).then(clearMonacoEditor);
+          }
+        });
+      });
+  };
+
+  return clearWithRetry();
+});
+
+Cypress.Commands.add('setQueryEditor', (value, options = {}) => {
+  const defaults = {
+    submit: true,
+  };
+
+  // Extract our command-specific options
+  const { submit = defaults.submit, ...typeOptions } = options;
 
   Cypress.log({
-    name: 'setSingleLineQueryEditor',
+    name: 'setQueryEditor',
     displayName: 'set query',
     message: value,
   });
 
-  cy.getElementByTestId('osdQueryEditor__singleLine', opts).type(value, opts);
+  // On a new session, a syntax helper popover appears, which obstructs the typing within the query
+  // editor. Clicking on a random element removes the popover.
+  cy.getElementByTestId('headerGlobalNav').click();
+
+  // clear the editor first and then set
+  clearMonacoEditor().then(() => {
+    return cy
+      .get('.inputarea')
+      .should('be.visible')
+      .wait(200)
+      .type(value, {
+        force: true,
+        ...typeOptions, // Pass through all other options to type command
+      });
+  });
 
   if (submit) {
-    cy.updateTopNav(opts);
+    cy.updateTopNav({ log: false });
   }
 });
 
@@ -26,71 +118,116 @@ Cypress.Commands.add('setQueryLanguage', (value) => {
     message: value,
   });
 
+  // adding wait here as sometimes the button clicks doesn't register
+  cy.wait(2000);
+
   cy.getElementByTestId(`queryEditorLanguageSelector`).click();
   cy.get(`[class~="languageSelector__menuItem"]`).contains(value).click({
     force: true,
   });
+
+  // Sometimes the syntax highlighter opens automatically. Closing it here if it does that
+  cy.wait(1000);
+  cy.get('body').then(($body) => {
+    const popovers = $body.find('.euiPopoverTitle');
+
+    for (const popover of popovers) {
+      if (popover.textContent === 'Syntax options') {
+        cy.getElementByTestId('languageReferenceButton').click();
+      }
+    }
+  });
 });
 
-/**
- * Creates a new data source connection with basic auth
- * @param {Object} options Configuration options for the data source
- * @param {string} options.name The name/title for the data source
- * @param {string} options.url The endpoint URL for the data source
- * @param {string} options.authType The authentication type (e.g. 'no_auth', 'basic_auth', etc.)
- * @param {Object} [options.credentials] Optional credentials for auth types that require them
- * @param {string} [options.credentials.username] Username for basic auth
- * @param {string} [options.credentials.password] Password for basic auth
- */
-Cypress.Commands.add('addDataSource', (options) => {
-  const { name, url, authType = 'no_auth', credentials = {} } = options;
+Cypress.Commands.add(
+  'setIndexAsDataset',
+  (index, dataSourceName, language, timeFieldName = 'timestamp', finalAction = 'submit') => {
+    cy.getElementByTestId('datasetSelectorButton').should('be.visible').click();
+    cy.getElementByTestId(`datasetSelectorAdvancedButton`).click();
+    cy.get(`[title="Indexes"]`).click();
+    cy.get(`[title="${dataSourceName}"]`).click();
+    // this element is sometimes dataSourceName masked by another element
+    cy.get(`[title="${index}"]`).should('be.visible').click({ force: true });
+    cy.getElementByTestId('datasetSelectorNext').click();
 
-  // Visit the create data source page
-  cy.visit('app/management/opensearch-dashboards/dataSources/create');
+    if (language) {
+      cy.getElementByTestId('advancedSelectorLanguageSelect').select(language);
+    }
 
-  // Intercept the create request to verify success
-  cy.intercept('POST', '/api/saved_objects/data-source').as('createDataSourceRequest');
+    cy.getElementByTestId('advancedSelectorTimeFieldSelect').select(timeFieldName);
 
-  // Select OpenSearch card
-  cy.getElementByTestId('datasource_card_opensearch').click();
+    if (finalAction === 'submit') {
+      cy.getElementByTestId('advancedSelectorConfirmButton').click();
 
-  // Fill in basic info
-  cy.get('[name="dataSourceTitle"]').type(name);
-  cy.get('[name="endpoint"]').type(url);
-
-  // Select auth type
-  cy.getElementByTestId('createDataSourceFormAuthTypeSelect').click();
-  cy.get(`button[id="${authType}"]`).click();
-
-  // Handle credentials if provided and required
-  if (authType === 'basic_auth' && credentials.username && credentials.password) {
-    cy.get('[name="username"]').type(credentials.username);
-    cy.get('[name="password"]').type(credentials.password);
+      // verify that it has been selected
+      cy.getElementByTestId('datasetSelectorButton').should(
+        'contain.text',
+        `${dataSourceName}::${index}`
+      );
+    } else {
+      cy.get('[type="button"]').contains('Cancel').click();
+    }
   }
+);
 
-  // Submit form. Adding 'force' as sometimes a popover hides the button
-  cy.getElementByTestId('createDataSourceButton').click({ force: true });
+Cypress.Commands.add('setIndexPatternAsDataset', (indexPattern, dataSourceName) => {
+  cy.getElementByTestId('datasetSelectorButton').should('be.visible').click();
+  cy.get(`[title="${dataSourceName}::${indexPattern}"]`).click();
 
-  // Wait for successful creation
-  cy.wait('@createDataSourceRequest').then((interception) => {
-    expect(interception.response.statusCode).to.equal(200);
-  });
-
-  // Verify redirect to data sources list page
-  cy.location('pathname', { timeout: 6000 }).should(
-    'include',
-    'app/management/opensearch-dashboards/dataSources'
+  // verify that it has been selected
+  cy.getElementByTestId('datasetSelectorButton').should(
+    'contain.text',
+    `${dataSourceName}::${indexPattern}`
   );
 });
 
-Cypress.Commands.add('deleteDataSourceByName', (dataSourceName) => {
-  // Navigate to the dataSource Management page
-  cy.visit('app/dataSources');
+Cypress.Commands.add('setDataset', (dataset, dataSourceName, type) => {
+  switch (type) {
+    case 'INDEX_PATTERN':
+      cy.setIndexPatternAsDataset(dataset, dataSourceName);
+      break;
+    case 'INDEXES':
+      cy.setIndexAsDataset(dataset, dataSourceName);
+      break;
+    default:
+      throw new Error(`setIndexPatternAsDataset encountered unknown type: ${type}`);
+  }
+});
 
-  // Find the anchor text correpsonding to specified dataSource
-  cy.get('a').contains(dataSourceName).click();
+Cypress.Commands.add(
+  'setIndexPatternFromAdvancedSelector',
+  (indexPattern, dataSourceName, language, finalAction = 'submit') => {
+    cy.getElementByTestId('datasetSelectorButton').should('be.visible').click();
+    cy.getElementByTestId(`datasetSelectorAdvancedButton`).click();
+    cy.get(`[title="Index Patterns"]`).click();
 
-  // Delete the dataSource connection
-  cy.getElementByTestId('editDatasourceDeleteIcon').click();
-  cy.getElementByTestId('confirmModalConfirmButton').click();
+    cy.get(`[title="${dataSourceName}::${indexPattern}"]`)
+      .should('be.visible')
+      .click({ force: true });
+    cy.getElementByTestId('datasetSelectorNext').click();
+
+    if (language) {
+      cy.getElementByTestId('advancedSelectorLanguageSelect').select(language);
+    }
+
+    if (finalAction === 'submit') {
+      cy.getElementByTestId('advancedSelectorConfirmButton').click();
+
+      // verify that it has been selected
+      cy.getElementByTestId('datasetSelectorButton').should(
+        'contain.text',
+        `${dataSourceName}::${indexPattern}`
+      );
+    } else {
+      cy.get('[type="button"]').contains('Cancel').click();
+    }
+  }
+);
+
+Cypress.Commands.add('setQuickSelectTime', (direction, time, timeUnit) => {
+  cy.getElementByTestId('superDatePickerToggleQuickMenuButton').click();
+  cy.get('[aria-label="Time tense"]').select(direction);
+  cy.get('[aria-label="Time value"]').clear().type(time);
+  cy.get('[aria-label="Time unit"]').select(timeUnit);
+  cy.get('.euiButton').contains('Apply').click();
 });
